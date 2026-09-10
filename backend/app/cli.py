@@ -14,14 +14,11 @@ import asyncio
 import getpass
 import os
 import sys
-import uuid
-from datetime import UTC, datetime
 
-from sqlalchemy import func, inspect, select
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.orm import selectinload
 
-ADMIN_ROLE = "admin"
+from app.services.bootstrap import ensure_superuser, validate_admin_input
 
 
 def _read(value: str | None, env: str, prompt: str, *, secret: bool = False) -> str:
@@ -38,10 +35,6 @@ def _read(value: str | None, env: str, prompt: str, *, secret: bool = False) -> 
 async def createsuperuser(username: str | None, email: str | None, *, no_input: bool) -> int:
     import app.models.device  # noqa: F401  (register all tables for FK checks)
     from app.core.config import get_settings
-    from app.core.constants import PERMISSIONS
-    from app.core.security import hash_password
-    from app.models.user import Permission, Role, User
-    from app.services import audit as audit_svc
 
     if no_input:
         username = username or os.environ.get("ZKTECO_ADMIN_USERNAME", "")
@@ -61,11 +54,10 @@ async def createsuperuser(username: str | None, email: str | None, *, no_input: 
         if not password:
             print("error: password must not be empty", file=sys.stderr)
             return 2
-    if "@" not in email:
-        print("error: invalid email address", file=sys.stderr)
-        return 2
-    if len(password) < 10:
-        print("error: password must be at least 10 characters", file=sys.stderr)
+    try:
+        validate_admin_input(username, email, password)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 2
 
     settings = get_settings()
@@ -86,59 +78,13 @@ async def createsuperuser(username: str | None, email: str | None, *, no_input: 
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
-        existing = await session.scalar(
-            select(func.count()).select_from(User).where(User.username == username)
+        _, created = await ensure_superuser(
+            session, username=username, email=email, password=password, via="cli"
         )
-        if existing:
+        if not created:
             print(f"error: username '{username}' already exists", file=sys.stderr)
             await engine.dispose()
             return 1
-        for code in PERMISSIONS:
-            if await session.scalar(select(Permission).where(Permission.code == code)) is None:
-                session.add(
-                    Permission(
-                        id=uuid.uuid4(),
-                        code=code,
-                        description=code,
-                        created_at=datetime.now(UTC),
-                        updated_at=datetime.now(UTC),
-                    )
-                )
-        await session.flush()
-        role = await session.scalar(
-            select(Role).options(selectinload(Role.permissions)).where(Role.name == ADMIN_ROLE)
-        )
-        if role is None:
-            role = Role(
-                id=uuid.uuid4(),
-                name=ADMIN_ROLE,
-                description="Full access",
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-            session.add(role)
-            await session.flush()
-            await session.refresh(role, attribute_names=["permissions"])
-        result = await session.execute(select(Permission))
-        role.permissions = list(result.scalars().all())
-        user = User(
-            username=username,
-            email=email,
-            password_hash=hash_password(password),
-            is_active=True,
-            is_superuser=True,
-        )
-        user.roles = [role]
-        session.add(user)
-        await session.flush()
-        await audit_svc.record(
-            session,
-            action="user.create",
-            user_id=user.id,
-            resource_type="user",
-            resource_id=user.id,
-            metadata={"username": username, "via": "cli"},
-        )
         await session.commit()
     await engine.dispose()
     print(f"superuser '{username}' created")

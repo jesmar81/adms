@@ -29,6 +29,21 @@ python -m app.cli createsuperuser             # primer admin (H-02, auditado)
 uvicorn app.main:app --reload
 ```
 
+Primer admin, dos caminos equivalentes (misma validación, mismo hash
+Argon2id, misma auditoría `user.create`):
+
+```bash
+# A) interactivo (recomendado en producción: el password no queda en disco)
+python -m app.cli createsuperuser
+# B) no interactivo (CI/dev): variables de entorno + --no-input
+ZKTECO_ADMIN_USERNAME=admin ZKTECO_ADMIN_EMAIL=admin@example.com \
+ZKTECO_ADMIN_PASSWORD='cambia-esto-ya-01' \
+  python -m app.cli createsuperuser --no-input
+# C) vía seed: con las tres ZKTECO_ADMIN_* definidas (ver backend/.env.example),
+#    `python -m app.seed` crea roles, permisos Y el admin en un solo paso
+#    (idempotente: un username existente no se toca nunca).
+```
+
 `GET http://localhost:8000/health` → `{"status":"ok"}`.
 OpenAPI admin: `/docs` (solo `/api/v1/*`; ADMS excluido, §65;
 desactivable con `DOCS_ENABLED=false`). La doc de ADMS es

@@ -1,20 +1,22 @@
-"""Seed initial roles + permissions only (§98). No fake devices."""
+"""Seed initial roles + permissions (§98) and, optionally, the first admin.
+
+Set ZKTECO_ADMIN_USERNAME / ZKTECO_ADMIN_EMAIL / ZKTECO_ADMIN_PASSWORD to
+also bootstrap the initial superuser (idempotent: an existing username is
+left untouched). No fake devices. Schema must come from Alembic in
+production; the local create_all below is a dev/test convenience only.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import uuid
-from datetime import UTC, datetime
+import os
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.orm import selectinload
 
 import app.models.device  # noqa: F401
 from app.core.config import get_settings
-from app.core.constants import DEFAULT_ROLES, PERMISSIONS
 from app.models.base import Base
-from app.models.user import Permission, Role
+from app.services.bootstrap import ensure_roles_permissions, ensure_superuser
 
 
 async def main() -> None:
@@ -23,37 +25,32 @@ async def main() -> None:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
-        for code in PERMISSIONS:
-            exists = await session.scalar(select(Permission).where(Permission.code == code))
-            if exists is None:
-                session.add(
-                    Permission(
-                        id=uuid.uuid4(),
-                        code=code,
-                        description=code,
-                        created_at=datetime.now(UTC),
-                        updated_at=datetime.now(UTC),
-                    )
-                )
-        await session.flush()
-        for role_name, codes in DEFAULT_ROLES.items():
-            role = await session.scalar(
-                select(Role).options(selectinload(Role.permissions)).where(Role.name == role_name)
-            )
-            if role is None:
-                role = Role(
-                    id=uuid.uuid4(),
-                    name=role_name,
-                    created_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
-                )
-                session.add(role)
-                await session.flush()
-                await session.refresh(role, attribute_names=["permissions"])
-            result = await session.execute(select(Permission).where(Permission.code.in_(codes)))
-            role.permissions = list(result.scalars().all())
+        await ensure_roles_permissions(session)
         await session.commit()
     print("seeded roles+permissions")
+    username = os.environ.get("ZKTECO_ADMIN_USERNAME", "")
+    email = os.environ.get("ZKTECO_ADMIN_EMAIL", "")
+    password = os.environ.get("ZKTECO_ADMIN_PASSWORD", "")
+    if not username and not email and not password:
+        print("hint: set ZKTECO_ADMIN_USERNAME/EMAIL/PASSWORD to bootstrap the first admin,")
+        print("      or run: python -m app.cli createsuperuser")
+        await engine.dispose()
+        return
+    async with factory() as session:
+        try:
+            user, created = await ensure_superuser(
+                session, username=username, email=email, password=password, via="seed"
+            )
+        except ValueError as exc:
+            print(f"error: invalid admin input: {exc}", flush=True)
+            await engine.dispose()
+            raise SystemExit(2) from exc
+        await session.commit()
+    await engine.dispose()
+    if created:
+        print(f"superuser '{user.username}' created")
+    else:
+        print(f"superuser '{username}' already exists, left untouched")
 
 
 if __name__ == "__main__":
