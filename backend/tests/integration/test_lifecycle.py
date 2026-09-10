@@ -1,0 +1,326 @@
+"""P2 regression: M-02 timezone, M-03 lifecycle, M-04 failure semantics, M-08 IDs."""
+
+from __future__ import annotations
+
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+from app.core import security
+from app.core.database import get_db
+from app.main import create_app
+
+
+@pytest_asyncio.fixture
+async def life_client(db_session):  # type: ignore[no-untyped-def]
+    from app.models.user import User
+
+    user = User(
+        username="life",
+        email="life@example.com",
+        password_hash=security.hash_password("s3cret-pw!"),
+        is_active=True,
+        is_superuser=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    app = create_app()
+
+    async def _override():  # type: ignore[no-untyped-def]
+        yield db_session
+
+    app.dependency_overrides[get_db] = _override
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        login = await client.post(
+            "/api/v1/auth/login", json={"username": "life", "password": "s3cret-pw!"}
+        )
+        assert login.status_code == 200
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+        yield client
+    app.dependency_overrides.clear()
+
+
+async def _device_id(life_client, serial: str) -> str:  # type: ignore[no-untyped-def]
+    await life_client.post(f"/iclock/registry?SN={serial}", content="~DeviceName=D")
+    devices = (await life_client.get("/api/v1/devices")).json()
+    return str(next(d for d in devices if d["serial_number"] == serial)["id"])
+
+
+async def _drain(life_client, serial: str) -> str:  # type: ignore[no-untyped-def]
+    response = await life_client.get(f"/iclock/getrequest?SN={serial}")
+    assert response.status_code == 200
+    return response.text
+
+
+# --- M-02 -----------------------------------------------------------------
+
+
+async def test_patch_timezone_and_attlog_conversion(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "TZ001")
+    patched = await life_client.patch(
+        f"/api/v1/devices/{device_id}", json={"timezone": "America/Mexico_City"}
+    )
+    assert patched.status_code == 200
+    assert patched.json()["timezone"] == "America/Mexico_City"
+    bad = await life_client.patch(f"/api/v1/devices/{device_id}", json={"timezone": "Mars/Olympus"})
+    assert bad.status_code == 422
+    # 08:30 in Mexico City (UTC-6, no DST in March 2024) is stored as 14:30 UTC.
+    await life_client.post(
+        "/iclock/cdata?SN=TZ001&table=ATTLOG", content="9\t2024-03-15 08:30:00\t0\t15\t"
+    )
+    rows = (await life_client.get("/api/v1/attendance?pin=9")).json()
+    assert len(rows) == 1
+    assert "14:30" in rows[0]["recorded_at"]
+    audit = (await life_client.get("/api/v1/audit?limit=50")).json()
+    assert any(a["action"] == "device.update" for a in audit)
+
+
+async def test_disable_and_reenable(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "REEN001")
+    assert (await life_client.patch(f"/api/v1/devices/{device_id}/disable")).status_code == 200
+    reenabled = await life_client.patch(f"/api/v1/devices/{device_id}", json={"status": "active"})
+    assert reenabled.status_code == 200
+    assert reenabled.json()["status"] != "disabled"
+    assert (
+        await life_client.patch(f"/api/v1/devices/{device_id}", json={"status": "explode"})
+    ).status_code == 422
+
+
+# --- M-03 -----------------------------------------------------------------
+
+
+async def test_create_confirm_lifecycle(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "LIFE001")
+    created = await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "3001", "name": "Nora", "privilege": 0, "card": ""},
+    )
+    assert created.json()["sync_state"] == "pending"
+    wire = await _drain(life_client, "LIFE001")
+    assert wire.startswith("C:1:DATA UPDATE USERINFO")
+    confirm = await life_client.post(
+        "/iclock/devicecmd?SN=LIFE001", content="ID=1&Return=0&CMD=DATA"
+    )
+    assert confirm.text == "OK"
+    row = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()[0]
+    assert row["sync_state"] == "synced"
+    assert row["last_protocol_command_id"] == 1
+    events = (await life_client.get(f"/api/v1/devices/{device_id}/events?limit=50")).json()
+    assert any(e["type"] == "user_sync_confirmed" for e in events)
+
+
+async def test_failed_confirm_marks_failed(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "zkteco_command_max_attempts", 1)
+    device_id = await _device_id(life_client, "LIFE002")
+    created = await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "3002", "name": "Ned", "privilege": 0, "card": ""},
+    )
+    assert created.status_code == 201
+    await _drain(life_client, "LIFE002")
+    await life_client.post("/iclock/devicecmd?SN=LIFE002", content="ID=1&Return=7&CMD=DATA")
+    row = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()[0]
+    assert row["sync_state"] == "failed"
+    events = (await life_client.get(f"/api/v1/devices/{device_id}/events?limit=50")).json()
+    assert any(e["type"] == "user_sync_failed" for e in events)
+
+
+async def test_delete_confirmed_removes_row(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "LIFE003")
+    created = await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "3003", "name": "Noa", "privilege": 0, "card": ""},
+    )
+    user_id = created.json()["id"]
+    await _drain(life_client, "LIFE003")
+    await life_client.post("/iclock/devicecmd?SN=LIFE003", content="ID=1&Return=0&CMD=DATA")
+    doomed = await life_client.delete(f"/api/v1/device-users/{user_id}")
+    assert doomed.status_code == 202
+    assert doomed.json()["sync_state"] == "pending"
+    await _drain(life_client, "LIFE003")
+    await life_client.post("/iclock/devicecmd?SN=LIFE003", content="ID=2&Return=0&CMD=DATA")
+    remaining = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()
+    assert remaining == []
+
+
+async def test_put_update_queues_and_confirms(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "LIFE004")
+    created = await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "3004", "name": "Old", "privilege": 0, "card": ""},
+    )
+    user_id = created.json()["id"]
+    await _drain(life_client, "LIFE004")
+    await life_client.post("/iclock/devicecmd?SN=LIFE004", content="ID=1&Return=0&CMD=DATA")
+    updated = await life_client.put(f"/api/v1/device-users/{user_id}", json={"name": "New"})
+    assert updated.status_code == 200
+    assert updated.json()["sync_state"] == "pending"
+    # Second update while pending → 409.
+    assert (
+        await life_client.put(f"/api/v1/device-users/{user_id}", json={"name": "New2"})
+    ).status_code == 409
+    await _drain(life_client, "LIFE004")
+    await life_client.post("/iclock/devicecmd?SN=LIFE004", content="ID=2&Return=0&CMD=DATA")
+    row = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()[0]
+    assert (row["name"], row["sync_state"]) == ("New", "synced")
+    audit = (await life_client.get("/api/v1/audit?limit=100")).json()
+    assert any(a["action"] == "device_user.update" for a in audit)
+
+
+async def test_userinfo_push_reconciles_pending(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "LIFE005")
+    await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "3005", "name": "Paz", "privilege": 0, "card": ""},
+    )
+    # Device answers a query with the user present → intent confirmed by push.
+    await life_client.post(
+        "/iclock/cdata?SN=LIFE005&table=USERINFO",
+        content="PIN=3005\tName=Paz\tPrivilege=0\tCard=\tPassword=",
+    )
+    row = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()[0]
+    assert row["sync_state"] == "synced"
+
+
+# --- M-04 -----------------------------------------------------------------
+
+
+async def test_attlog_persistence_failure_returns_500(life_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.services import attendance as attendance_svc
+
+    async def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(attendance_svc, "ingest_records", _boom)
+    response = await life_client.post(
+        "/iclock/cdata?SN=FAIL500&table=ATTLOG", content="1\t2024-03-15 08:30:00\t0\t1\t"
+    )
+    assert response.status_code == 500
+    assert response.text != "OK"
+
+
+async def test_getrequest_failure_stays_ok_and_pending(life_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.services import command as command_svc
+
+    device_id = await _device_id(life_client, "FAILOK")
+    await life_client.post(
+        f"/api/v1/devices/{device_id}/commands", json={"command_type": "CHECK", "params": {}}
+    )
+
+    async def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("drain down")
+
+    monkeypatch.setattr(command_svc, "drain_for_device", _boom)
+    response = await life_client.get("/iclock/getrequest?SN=FAILOK")
+    assert response.status_code == 200
+    assert response.text == "OK"
+
+
+async def test_duplicate_confirm_is_idempotent(life_client, db_session) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import func, select
+
+    from app.models.device import DeviceEvent
+
+    device_id = await _device_id(life_client, "IDEMP")
+    await life_client.post(
+        f"/api/v1/devices/{device_id}/commands", json={"command_type": "CHECK", "params": {}}
+    )
+    await _drain(life_client, "IDEMP")
+    body = "ID=1&Return=0&CMD=CHECK"
+    assert (await life_client.post("/iclock/devicecmd?SN=IDEMP", content=body)).text == "OK"
+    assert (await life_client.post("/iclock/devicecmd?SN=IDEMP", content=body)).text == "OK"
+    count = await db_session.scalar(
+        select(func.count())
+        .select_from(DeviceEvent)
+        .where(DeviceEvent.event_type == "command_confirmed")
+    )
+    assert count == 1
+
+
+# --- M-05 soak ---------------------------------------------------------------
+
+
+async def test_attlog_soak_20k_lines(life_client) -> None:  # type: ignore[no-untyped-def]
+    import time
+    from datetime import UTC, datetime, timedelta
+
+    base = datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
+    fmt = "%Y-%m-%d %H:%M:%S"
+    lines = [
+        f"{(i % 50) + 1}\t{(base + timedelta(seconds=i)).strftime(fmt)}\t{i % 6}\t15\t"
+        for i in range(20000)
+    ]
+    body = "\n".join(lines)
+    started = time.monotonic()
+    response = await life_client.post("/iclock/cdata?SN=SOAK001&table=ATTLOG", content=body)
+    elapsed = time.monotonic() - started
+    assert response.status_code == 200
+    assert response.text == "OK: 20000"
+    assert elapsed < 60, f"soak took {elapsed:.1f}s"
+    # Re-post is fully deduplicated.
+    again = await life_client.post("/iclock/cdata?SN=SOAK001&table=ATTLOG", content=body)
+    assert again.text == "OK: 0"
+
+
+# --- M-08 (single-node) ----------------------------------------------------
+
+
+async def test_protocol_ids_monotonic_unique(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "SEQ001")
+    ids = []
+    for _ in range(5):
+        created = await life_client.post(
+            f"/api/v1/devices/{device_id}/commands", json={"command_type": "CHECK", "params": {}}
+        )
+        ids.append(created.json()["protocol_command_id"])
+    assert ids == [1, 2, 3, 4, 5]
+
+
+# --- L-02 retry/TTL policy + L-01 date validation ----------------------------
+
+
+async def test_failed_confirm_retries_then_fails(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "zkteco_command_max_attempts", 2)
+    device_id = await _device_id(life_client, "RETRY001")
+    await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "4001", "name": "Rita", "privilege": 0, "card": ""},
+    )
+    await _drain(life_client, "RETRY001")
+    # First failure → back to pending (retry), user still pending.
+    await life_client.post("/iclock/devicecmd?SN=RETRY001", content="ID=1&Return=7&CMD=DATA")
+    row = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()[0]
+    assert row["sync_state"] == "pending"
+    # Redelivered, fails again → attempts exhausted → failed.
+    redelivered = await _drain(life_client, "RETRY001")
+    assert "C:1:" in redelivered
+    await life_client.post("/iclock/devicecmd?SN=RETRY001", content="ID=1&Return=7&CMD=DATA")
+    row = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()[0]
+    assert row["sync_state"] == "failed"
+
+
+async def test_expired_command_never_delivered(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "zkteco_command_ttl_s", -1)
+    device_id = await _device_id(life_client, "TTL001")
+    await life_client.post(
+        f"/api/v1/devices/{device_id}/commands", json={"command_type": "CHECK", "params": {}}
+    )
+    assert (await _drain(life_client, "TTL001")) == "OK"
+    commands = (await life_client.get(f"/api/v1/devices/{device_id}/commands")).json()
+    assert commands[0]["status"] == "expired"
+    monkeypatch.setattr(settings, "zkteco_command_ttl_s", 86400)
+
+
+async def test_attendance_date_validation(life_client) -> None:  # type: ignore[no-untyped-def]
+    base = "/api/v1/attendance"
+    naive = await life_client.get(base + "?date_from=2024-01-01T00:00:00")
+    assert naive.status_code == 422
+    inverted = await life_client.get(
+        base + "?date_from=2025-01-01T00:00:00Z&date_to=2024-01-01T00:00:00Z"
+    )
+    assert inverted.status_code == 422
+    ok_range = await life_client.get(
+        base + "?date_from=2024-01-01T00:00:00Z&date_to=2025-01-01T00:00:00Z"
+    )
+    assert ok_range.status_code == 200

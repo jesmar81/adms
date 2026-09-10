@@ -1,0 +1,2 @@
+PIN=1	Name=John Doe	Privilege=0	Card=	Password=
+PIN=2	Name=Ana	Privilege=14	Card=12345	Password=

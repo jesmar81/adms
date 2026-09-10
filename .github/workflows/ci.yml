@@ -1,0 +1,66 @@
+name: ci
+on: [push, pull_request]
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  backend-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e .[dev]
+      - run: ruff check app tests alembic
+      - run: ruff format --check app tests alembic
+      - run: mypy --strict app
+      - run: pytest tests/unit -q
+
+  backend-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zkteco
+          POSTGRES_PASSWORD: zkteco
+          POSTGRES_DB: zkteco_adms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U zkteco" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://zkteco:zkteco@localhost:5432/zkteco_adms
+      REDIS_URL: redis://localhost:6379/0
+      ZKTECO_TEST_PG_URL: postgresql+asyncpg://zkteco:zkteco@localhost:5432/zkteco_adms
+      ZKTECO_USE_REAL_REDIS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e .[dev]
+      - run: alembic upgrade head
+      - run: alembic check
+      - run: pytest tests --cov=app --cov-report=term-missing --cov-fail-under=90
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build

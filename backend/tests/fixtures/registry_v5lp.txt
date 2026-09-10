@@ -1,0 +1,1 @@
+~DeviceName=SpeedFace-V5LP,~FWVersion=Ver 1.1.17,~MACAddress=AA:BB:CC:DD:EE:FF,~Platform=ZMM720,~IPAddress=192.168.1.50

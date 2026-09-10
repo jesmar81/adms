@@ -1,0 +1,2 @@
+ID=1&Return=0&CMD=INFO
+ID=2&Return=0&CMD=CHECK

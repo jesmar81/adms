@@ -1,0 +1,8 @@
+DeviceName=SpeedFace-V5LP
+FWVersion=Ver 1.1.17
+IPAddress=192.168.1.50
+MACAddress=AA:BB:CC:DD:EE:FF
+Platform=ZMM720
+UserCount=42
+FaceCount=40
+AttLogCount=1337
