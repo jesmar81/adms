@@ -1,0 +1,9 @@
+# Never let host artifacts (esp. Windows node_modules) poison the Linux image.
+node_modules
+.next
+out
+*.log
+.git
+.gitignore
+coverage
+.nyc_output

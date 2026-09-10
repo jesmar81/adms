@@ -1,0 +1,13 @@
+# Keep secrets and dev artifacts out of the build context AND the image.
+.env
+*.pem
+tests
+__pycache__
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+*.egg-info
+.git
+.gitignore
