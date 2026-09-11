@@ -1,0 +1,108 @@
+import type { ReactNode } from "react";
+
+export interface Column<T> {
+  key: string;
+  header: string;
+  render: (row: T) => ReactNode;
+  className?: string;
+}
+
+interface DataTableProps<T> {
+  columns: Column<T>[];
+  data: T[];
+  keyOf: (row: T, index: number) => string;
+  /** Representación en tarjeta para móvil (sin overflow horizontal). */
+  renderCard: (row: T, index: number) => ReactNode;
+  empty: ReactNode;
+  ariaLabel: string;
+}
+
+/**
+ * Tabla en desktop, lista de tarjetas en móvil.
+ * El `empty` lo provee cada página (EmptyState contextual).
+ */
+export function DataTable<T>({ columns, data, keyOf, renderCard, empty, ariaLabel }: DataTableProps<T>) {
+  if (data.length === 0) return <>{empty}</>;
+
+  return (
+    <>
+      <div className="hidden overflow-hidden rounded-2xl border border-line-subtle bg-white shadow-card md:block">
+        <table aria-label={ariaLabel} className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line-subtle bg-zinc-50/60">
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  scope="col"
+                  className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 ${col.className ?? ""}`}
+                >
+                  {col.header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row, i) => (
+              <tr
+                key={keyOf(row, i)}
+                className="border-b border-line-subtle/70 transition-colors duration-150 last:border-0 hover:bg-black/[0.02]"
+              >
+                {columns.map((col) => (
+                  <td key={col.key} className={`px-4 py-3.5 align-middle text-zinc-700 ${col.className ?? ""}`}>
+                    {col.render(row)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-col gap-3 md:hidden">
+        {data.map((row, i) => (
+          <div
+            key={keyOf(row, i)}
+            className="rounded-2xl border border-line-subtle bg-white p-4 shadow-card"
+          >
+            {renderCard(row, i)}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+export function Pagination({
+  offset,
+  limit,
+  hasMore,
+  onPage,
+}: {
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  onPage: (offset: number) => void;
+}) {
+  return (
+    <div className="mt-5 flex items-center justify-between gap-3 text-sm">
+      <p className="text-zinc-500 tabular-nums">
+        Mostrando {offset + 1}–{offset + limit}
+      </p>
+      <div className="flex gap-2">
+        <button
+          disabled={offset === 0}
+          onClick={() => onPage(Math.max(0, offset - limit))}
+          className="rounded-full border border-line-soft bg-white px-4 py-1.5 text-zinc-700 shadow-sm transition-colors duration-200 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Anterior
+        </button>
+        <button
+          disabled={!hasMore}
+          onClick={() => onPage(offset + limit)}
+          className="rounded-full border border-line-soft bg-white px-4 py-1.5 text-zinc-700 shadow-sm transition-colors duration-200 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
+  );
+}

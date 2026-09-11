@@ -65,3 +65,33 @@ def test_settings_singleton_defaults() -> None:
     settings = get_settings()
     assert settings.zkteco_max_body_size == 10 * 1024 * 1024
     assert settings.zkteco_online_threshold == 120
+
+
+def test_device_out_serializes_pg_inet_object() -> None:
+    """Regression: PostgreSQL INET returns IPv4Address via asyncpg.
+
+    GET /api/v1/devices raised 500 (ResponseValidationError) for any device
+    with an IP until _to_out coerced it to str.
+    """
+    import ipaddress
+    import uuid
+
+    from app.api.v1.devices import _to_out
+    from app.models.device import Device
+
+    device = Device(
+        id=uuid.uuid4(),
+        serial_number="REG-INET-01",
+        status="unknown",
+        options={},
+        extra_metadata={},
+        timezone="UTC",
+    )
+    # Simulate the asyncpg PG driver value (not a str).
+    device.ip_address = ipaddress.ip_address("192.168.1.201")  # type: ignore[assignment]
+
+    out = _to_out(device)
+    assert out.ip_address == "192.168.1.201"
+
+    device.ip_address = None
+    assert _to_out(device).ip_address is None

@@ -2,7 +2,7 @@
 
 ## 1. Requisitos
 
-Python 3.12+ · PostgreSQL 16+ · Redis 7 · Node 20. Sin `docker` local también
+Python 3.12+ · PostgreSQL 16+ · Redis 7 · Node 24. Sin `docker` local también
 se puede desarrollar (parsers + unit tests sin infra; PG vía
 `ZKTECO_TEST_PG_URL` para integración).
 

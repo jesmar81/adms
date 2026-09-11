@@ -31,7 +31,9 @@ def _to_out(device: Device) -> DeviceOut:
         model=device.model,
         firmware_version=device.firmware_version,
         platform=device.platform,
-        ip_address=device.ip_address,
+        # PostgreSQL INET returns ipaddress.IPv4Address/IPv6Address objects
+        # via asyncpg; DeviceOut expects str. str() is idempotent for str.
+        ip_address=str(device.ip_address) if device.ip_address is not None else None,
         mac_address=device.mac_address,
         timezone=device.timezone,
         status=device.status,

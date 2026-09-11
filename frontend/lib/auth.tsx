@@ -70,7 +70,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [loading, user, router]);
-  if (loading) return <p className="p-8 text-slate-400">Loading…</p>;
+  if (loading) return <p className="min-h-screen bg-surface-canvas p-8 text-zinc-400">Cargando…</p>;
   if (!user) return null;
   return <>{children}</>;
 }

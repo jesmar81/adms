@@ -1,17 +1,103 @@
+# ============================================================
+# Python
+# ============================================================
 __pycache__/
 *.py[cod]
+*$py.class
+*.pyo
 .venv/
-.env
-*.pem
-.pytest_cache/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+.pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pyre/
+.pytype/
+
+# ============================================================
+# Entorno y secretos (NUNCA subir)
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+secrets/
+secrets.yaml
+secrets.yml
+
+# ============================================================
+# Node / Next.js
+# ============================================================
 node_modules/
 .next/
-dist/
-pgdata/
-
-# TS build info
+out/
 *.tsbuildinfo
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.vercel
+.turbo
+
+# ============================================================
+# Datos locales e infraestructura
+# ============================================================
+pgdata/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.dump
+*.sql.gz
+
+# ============================================================
+# Logs y temporales
+# ============================================================
+*.log
+nohup.out
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Editores e IDEs
+# ============================================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.vim/
+.nvim/
+*.code-workspace
+
+# ============================================================
+# Docker y sistema
+# ============================================================
+.docker/
