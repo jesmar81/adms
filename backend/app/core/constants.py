@@ -59,9 +59,12 @@ GET_OPTION_KEYS = frozenset(
 )
 
 #: Normalized device columns synced from `options` (see ARCHITECTURE §2.2).
+#: Aliases cover both wire spellings: registry bodies send `FirmVer`,
+#: device-info bodies send `FWVersion`.
 OPTION_TO_COLUMN = {
     "DeviceName": "name",
     "FWVersion": "firmware_version",
+    "FirmVer": "firmware_version",
     "Platform": "platform",
     "IPAddress": "ip_address",
     "MACAddress": "mac_address",
