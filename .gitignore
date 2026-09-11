@@ -98,6 +98,13 @@ desktop.ini
 *.code-workspace
 
 # ============================================================
+# Documentos de trabajo con IA / auditorías (no se suben)
+# ============================================================
+ARCHITECTURE.md
+AUDIT_REPORT.md
+REMEDIATION_REPORT.md
+
+# ============================================================
 # Docker y sistema
 # ============================================================
 .docker/
