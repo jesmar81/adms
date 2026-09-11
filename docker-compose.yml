@@ -31,6 +31,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://zkteco:zkteco@postgres:5432/zkteco_adms
       REDIS_URL: redis://redis:6379/0
+      # Local-dev default so the bundled frontend (localhost:3000) can call
+      # the API from the browser. PRODUCTION MUST override this with the real
+      # origin(s), e.g. FRONTEND_ORIGINS_RAW=https://admin.example.com
+      # (never "*" together with credentials).
+      FRONTEND_ORIGINS_RAW: http://localhost:3000
     ports:
       - "8000:8000"
     depends_on:
