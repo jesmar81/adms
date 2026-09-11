@@ -38,6 +38,11 @@ services:
       FRONTEND_ORIGINS_RAW: http://localhost:3000
     ports:
       - "8000:8000"
+    volumes:
+      # JWT RS256 keys live on the host (generated per docs/DEVELOPMENT.md);
+      # the image never bakes them in. Required for login to work.
+      - ./backend/.jwt_private.pem:/srv/app/.jwt_private.pem:ro
+      - ./backend/.jwt_public.pem:/srv/app/.jwt_public.pem:ro
     depends_on:
       postgres:
         condition: service_healthy

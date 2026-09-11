@@ -29,8 +29,9 @@ ZKTeco (prioridad: **SpeedFace-V5LP**): gateway ADMS con **FastAPI** + **Postgre
 1. [Características](#características)
 2. [Arquitectura](#arquitectura)
 3. [Requisitos](#requisitos)
-4. [Instalación en Linux (paso a paso)](#instalación-en-linux-paso-a-paso)
-5. [Instalación en Windows (paso a paso)](#instalación-en-windows-paso-a-paso)
+4. [Puesta en marcha: Docker o manual](#puesta-en-marcha-docker-o-manual)
+5. [Instalación en Linux — híbrida](#instalación-en-linux-paso-a-paso)
+6. [Instalación en Windows — híbrida](#instalación-en-windows-paso-a-paso)
 6. [Configuración](#configuración)
 7. [Uso](#uso)
 8. [API](#api)
@@ -92,7 +93,95 @@ Navegador ──▶ Next.js :3000 ──▶ │  └─ Redis :6379 (sesiones, r
 
 ---
 
+## Puesta en marcha: ¿Docker o manual?
+
+| | **Opción A — Todo con Docker** (recomendada) | **Opción B — Híbrida** (desarrollo) |
+|---|---|---|
+| Infra (PG + Redis) | Contenedores | Contenedores |
+| Backend | Contenedor (`adms-backend-1`) | Local (venv + uvicorn) |
+| Frontend | Contenedor (`adms-frontend-1`) | Local (`npm run dev`) o contenedor |
+| Ideal para | Probar el sistema tal cual | Modificar código con recarga |
+
+### Opción A — Todo con Docker (Linux y Windows)
+
+**1. Clonar:**
+
+```bash
+git clone git@github.com:jesmar81/adms.git
+cd adms
+```
+
+**2. Crear `backend/.env` y las claves JWT** (ver
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)):
+
+Linux:
+
+```bash
+cp backend/.env.example backend/.env
+pip install cryptography
+python3 - <<'EOF'
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+open('backend/.jwt_private.pem','wb').write(k.private_bytes(
+    serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption()))
+open('backend/.jwt_public.pem','wb').write(k.public_key().public_bytes(
+    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
+EOF
+```
+
+Windows (PowerShell):
+
+```powershell
+Copy-Item backend\.env.example backend\.env
+pip install cryptography
+py -c "from cryptography.hazmat.primitives.asymmetric import rsa; from cryptography.hazmat.primitives import serialization; k = rsa.generate_private_key(public_exponent=65537, key_size=2048); open('backend/.jwt_private.pem','wb').write(k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())); open('backend/.jwt_public.pem','wb').write(k.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))"
+```
+
+> `.env` y `*.pem` están en `.gitignore`: nunca se suben al repositorio.
+
+**3. Definir el admin inicial en `backend/.env`** (el seed lo crea solo):
+
+```text
+ZKTECO_ADMIN_USERNAME=admin
+ZKTECO_ADMIN_EMAIL=admin@example.com
+ZKTECO_ADMIN_PASSWORD=cambia-esto-ya-01   # mínimo 10 caracteres
+```
+
+**4. Levantar todo:**
+
+```bash
+docker compose up -d --build
+docker compose ps   # los 4 servicios en Up/healthy
+```
+
+El contenedor `backend` aplica migraciones solo (`alembic upgrade head`), monta
+las claves JWT en solo-lectura y expone `:8000`. La UI queda en
+`http://localhost:3000`.
+
+**5. Crear datos base y admin (una sola vez):**
+
+```bash
+docker compose exec backend python -m app.seed
+# o interactivo:
+docker compose exec backend python -m app.cli createsuperuser
+```
+
+Verifica: `http://localhost:8000/health` → `{"status":"ok"}` e inicia sesión en
+la UI.
+
+### Opción B — Desarrollo local (híbrido)
+
+Docker solo para PostgreSQL/Redis; backend y frontend corren en tu máquina con
+recarga. Elige tu sistema:
+
+---
+
 ## Instalación en Linux (paso a paso)
+
+> Opción B (híbrida): la infraestructura va en Docker y el código corre local.
+> Para todo-Docker, usa la [Opción A](#opción-a--todo-con-docker-linux-y-windows).
 
 ### 1. Clonar y entrar al proyecto
 
@@ -170,6 +259,9 @@ npm run dev   # http://localhost:3000
 
 ## Instalación en Windows (paso a paso)
 
+> Opción B (híbrida): la infraestructura va en Docker y el código corre local.
+> Para todo-Docker, usa la [Opción A](#opción-a--todo-con-docker-linux-y-windows).
+
 > Requiere Docker Desktop en ejecución y Python/Node agregados al `PATH`.
 > Verifica con `py --version`, `node --version`, `docker --version`.
 
@@ -240,11 +332,11 @@ Variables principales en `backend/.env` (ver `backend/.env.example` comentado):
 
 | Variable | Defecto | Descripción |
 | -------- | ------- | ----------- |
-| `DATABASE_URL` | `postgresql+asyncpg://zkteco:zkteco@localhost:5432/zkteco_adms` | Conexión PostgreSQL (en contenedor: host `postgres`) |
-| `REDIS_URL` | `redis://localhost:6379/0` | Conexión Redis (en contenedor: host `redis`) |
-| `JWT_PRIVATE_KEY_FILE` / `JWT_PUBLIC_KEY_FILE` | `.jwt_private.pem` / `.jwt_public.pem` | Claves RS256 (rotan con reinicio) |
+| `DATABASE_URL` | `postgresql+asyncpg://zkteco:zkteco@localhost:5432/zkteco_adms` | Conexión PostgreSQL. En local usa `localhost`; el contenedor `backend` la sobrescribe a host `postgres` (ver `docker-compose.yml`) |
+| `REDIS_URL` | `redis://localhost:6379/0` | Igual: en contenedor se sobrescribe a host `redis` |
+| `JWT_PRIVATE_KEY_FILE` / `JWT_PUBLIC_KEY_FILE` | `.jwt_private.pem` / `.jwt_public.pem` | Claves RS256 (rotan con reinicio). El compose las monta en solo-lectura dentro del contenedor |
 | `ZKTECO_ADMIN_USERNAME/EMAIL/PASSWORD` | — | Bootstrap del primer superusuario (mín. 10 caracteres) |
-| `FRONTEND_ORIGINS_RAW` | — | **Obligatorio para la UI**: `http://localhost:3000` en local. Nunca `*` con credenciales |
+| `FRONTEND_ORIGINS_RAW` | — | **Obligatorio para la UI**: `http://localhost:3000` en local (el compose ya lo fija para el contenedor). Nunca `*` con credenciales |
 | `RATELIMIT_*` | ver ejemplo | Límites de login/refresh/ADMS (Redis) |
 | `ZKTECO_ONLINE_THRESHOLD` / `ZKTECO_STALE_AFTER` | `120` / `86400` | Ventanas de estado online/offline/stale (segundos) |
 | `DOCS_ENABLED` | `true` | Expone `/docs` y `/openapi.json` (solo `/api/v1/*`) |
@@ -368,6 +460,7 @@ backend con PostgreSQL+Redis reales (cobertura ≥ 90 %) y frontend
 | `No 'Access-Control-Allow-Origin'` en el navegador | Falta `FRONTEND_ORIGINS_RAW=http://localhost:3000` en `backend/.env` (sin él, el middleware CORS ni se instala) | Fíjalo y reinicia uvicorn |
 | `401` en `/api/v1/devices` sin token | Esperado: requiere login | Inicia sesión; el frontend reintenta con refresh |
 | `503` en login/refresh | Redis caído (auth es fail-closed) | `docker compose up -d redis` |
+| Backend en Docker: login siempre `401` | Faltan las claves JWT en el host (el contenedor las monta) | Genera los `.pem` (paso 2) y `docker compose restart backend` |
 | `alembic check` con diferencias | Migración pendiente o modelo sin migrar | `alembic upgrade head`; crea revisión si cambiaste modelos |
 | Puerto 8000/3000 ocupado | Otro proceso | Libera el puerto o ajusta el mapeo en compose |
 | En Windows, el reloj no alcanza `localhost:8000` | Firewall o `localhost` del dispositivo | Usa la IP LAN del host y permite el puerto en el firewall |
