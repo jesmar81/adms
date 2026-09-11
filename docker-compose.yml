@@ -35,7 +35,7 @@ services:
       # the API from the browser. PRODUCTION MUST override this with the real
       # origin(s), e.g. FRONTEND_ORIGINS_RAW=https://admin.example.com
       # (never "*" together with credentials).
-      FRONTEND_ORIGINS_RAW: http://localhost:3000
+      FRONTEND_ORIGINS_RAW: http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "8000:8000"
     volumes:
