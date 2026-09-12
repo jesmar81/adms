@@ -34,6 +34,7 @@ GET  /iclock/inspect                             (debug JSON, deshabilitado por 
 | Caso | Respuesta `text/plain` |
 |---|---|
 | Sin comandos pendientes (getrequest / cdata handshake) | `OK` |
+| Push-options handshake (`GET /iclock/cdata?...&options=all`) | Bloque `GET OPTION FROM:` + `TransFlag`/`Realtime` (CRLF, §26; **sin** líneas `C:`, que solo viajan en getrequest) |
 | ATTLOG procesado, N válidos | `OK: N` |
 | OPERLOG | `OK` |
 | USERINFO / registry / devicecmd / device-info | `OK` |
@@ -68,6 +69,10 @@ Clasificación por query `table`:
 - `OPERLOG` → `OK` (se persiste payload + evento `operlog_received` a nivel `debug`).
 - `USERINFO` → §4.3. Respuesta `OK`.
 - ausente/otro → device-info (§4.4) en POST + drenar comandos (igual que getrequest).
+- EXCEPCIÓN: con query `options=all` (handshake de opciones del firmware, §26)
+  se responde el bloque push-options y NO se drenan comandos: varios firmwares
+  acc ignoran cuerpos mezclados y jamás suben tablas. TransFlag configurable vía
+  `ZKTECO_TRANS_FLAG` (bits sin verificar en hardware).
 
 Pipeline (§30): `raw → validate → payload classify → parser → DTO →
 validation → service → DB → event → response`.

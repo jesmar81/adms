@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     zkteco_default_timezone: str = Field(default="UTC")
     # Device USERINFO `Password=` field: never persisted unless explicitly enabled.
     zkteco_persist_device_password: bool = Field(default=False)
+    # Push-upload handshake answered to `GET /iclock/cdata?...&options=all`
+    # (§26). TransFlag bit positions are unverified on hardware: the default
+    # enables the leading transaction/operlog positions only (attendance +
+    # users channel, no photos/BIO). Restart picks up changes.
+    zkteco_trans_flag: str = Field(default="1100000000")
 
     # --- JWT RS256 ---
     jwt_private_key: str = Field(default="")

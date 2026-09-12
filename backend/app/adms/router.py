@@ -17,7 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adms import parser as adms_parser
 from app.adms.exceptions import InvalidSerialNumberError
-from app.adms.serializers import wire_attlog_ack, wire_commands, wire_ok
+from app.adms.serializers import (
+    wire_attlog_ack,
+    wire_commands,
+    wire_ok,
+    wire_push_options,
+)
 from app.adms.validators import validate_serial_number
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -139,6 +144,23 @@ async def handle_cdata(
     if isinstance(device, PlainTextResponse):
         await session.rollback()
         return device
+
+    # Push-options handshake (§26, real-hardware behavior): the firmware polls
+    # `GET /iclock/cdata?...&options=all` expecting its upload configuration
+    # (TransFlag/Realtime). Answer ONLY the options block here — pending `C:`
+    # commands are delivered exclusively via /iclock/getrequest, never mixed
+    # into this response (acc firmwares misparse mixed bodies and stay silent).
+    # No payload row is stored: this poll fires every ~15s per device.
+    # NOTE: deviates from docs/ADMS_PROTOCOL.md §2/§4 (drain-on-handshake),
+    # which never covered options=all; TransFlag bits are unverified, tunable
+    # via ZKTECO_TRANS_FLAG.
+    if request.query_params.get("options", "").lower() == "all":
+        device.last_cdata_at = _utcnow()
+        await session.commit()
+        return PlainTextResponse(
+            wire_push_options(sn, trans_flag=get_settings().zkteco_trans_flag),
+            status_code=200,
+        )
 
     table = request.query_params.get("table", "").upper()
     text = body.decode("utf-8", errors="replace")
