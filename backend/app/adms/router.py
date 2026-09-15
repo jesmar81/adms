@@ -224,6 +224,8 @@ async def handle_cdata(
             response_text = await _handle_attlog(session, device, request, body, text)
         elif table == "RTLOG":
             response_text = await _handle_rtlog(session, device, request, body, text)
+        elif table == "RTSTATE":
+            response_text = await _handle_rtstate(session, device, request, body)
         elif table == "OPERLOG":
             payload = await _store_payload(
                 session,
@@ -304,6 +306,31 @@ async def _handle_rtlog(
     if stats.skipped:
         payload.error_message = f"skipped {stats.skipped}/{stats.total} malformed RTLOG lines"
         log.warning("rtlog_malformed", serial=device.serial_number, skipped=stats.skipped)
+    return wire_ok()
+
+
+async def _handle_rtstate(
+    session: AsyncSession, device: Device, request: Request, body: bytes
+) -> str:
+    """Acknowledge Security PUSH access-panel state without draining commands.
+
+    A SpeedFace-V5L sends ``table=rtstate`` immediately before its ``rtlog``
+    access events.  It is state telemetry (door, relay, alarm and sensor), not
+    device information and not a command poll.  In particular, responding
+    through ``_handle_info_or_commands`` could deliver queued commands on an
+    unsupported route.  Preserve the original body for diagnosis and return
+    the exact acknowledgement expected by the panel.
+    """
+    payload = await _store_payload(
+        session,
+        device=device,
+        endpoint="cdata",
+        request=request,
+        body=body,
+        data_type="RTSTATE",
+    )
+    payload.processing_status = "processed"
+    payload.processed_at = _utcnow()
     return wire_ok()
 
 

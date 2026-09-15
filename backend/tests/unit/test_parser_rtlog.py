@@ -25,3 +25,30 @@ def test_rtlog_skips_rows_without_pin_or_timestamp() -> None:
     records, stats = parse_rtlog(body, "ACC001")
     assert records == []
     assert (stats.total, stats.valid, stats.skipped) == (2, 0, 2)
+
+
+def test_rtlog_parses_speedface_v5l_capture() -> None:
+    """Actual Security PUSH payloads captured from the deployed V5L."""
+    body = (
+        "time=2026-09-15 15:32:41\tpin=2\tcardno=0\teventaddr=1\tevent=3\t"
+        "inoutstatus=0\tverifytype=1\tindex=114\tsitecode=0\tlinkid=0\t"
+        "maskflag=255\ttemperature=255\tconvtemperature=255\n"
+        "time=2026-09-15 15:33:07\tpin=2\tcardno=0\teventaddr=1\tevent=3\t"
+        "inoutstatus=0\tverifytype=1\tindex=115\tsitecode=0\tlinkid=0\t"
+        "maskflag=255\ttemperature=255\tconvtemperature=255\n"
+        "time=2026-09-15 15:33:16\tpin=5\tcardno=0\teventaddr=1\tevent=3\t"
+        "inoutstatus=0\tverifytype=15\tindex=116\tsitecode=0\tlinkid=0\t"
+        "maskflag=255\ttemperature=255\tconvtemperature=255\n"
+        "time=2026-09-15 15:33:17\tpin=5\tcardno=0\teventaddr=1\tevent=3\t"
+        "inoutstatus=0\tverifytype=15\tindex=117\tsitecode=0\tlinkid=0\t"
+        "maskflag=255\ttemperature=255\tconvtemperature=255"
+    )
+    records, stats = parse_rtlog(body, "AJE1260401355", "America/Mexico_City")
+    assert (stats.total, stats.valid, stats.skipped) == (4, 4, 0)
+    assert [(r.user_id, r.status, r.verify_mode) for r in records] == [
+        ("2", 0, 1),
+        ("2", 0, 1),
+        ("5", 0, 15),
+        ("5", 0, 15),
+    ]
+    assert [r.timestamp.second for r in records] == [41, 7, 16, 17]
