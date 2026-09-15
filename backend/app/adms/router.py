@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
@@ -18,10 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adms import parser as adms_parser
 from app.adms.exceptions import InvalidSerialNumberError
 from app.adms.serializers import (
+    SecurityPushConfig,
     wire_attlog_ack,
     wire_commands,
     wire_ok,
     wire_push_options,
+    wire_registry_code,
+    wire_security_push_config,
+    wire_security_push_options,
 )
 from app.adms.validators import validate_serial_number
 from app.core.config import get_settings
@@ -122,6 +127,45 @@ async def _drain_wire(session: AsyncSession, device: Device) -> str:
     return wire_commands([(r.protocol_command_id, r.command) for r in rows])
 
 
+def _is_security_push_device(request: Request, device: Device) -> bool:
+    """Whether this is an access-control Security PUSH terminal.
+
+    ``DeviceType=acc`` is sent during the initial cdata request, before the
+    registry body has been persisted, so inspect both sources.
+    """
+    device_type = request.query_params.get("DeviceType") or (device.options or {}).get(
+        "DeviceType", ""
+    )
+    return str(device_type).lower() == "acc"
+
+
+def _new_push_identifier() -> str:
+    """Return an ASCII, 32-character identifier accepted by Security PUSH."""
+    return secrets.token_hex(16)
+
+
+def _security_push_kwargs(device: Device) -> SecurityPushConfig:
+    """Return the common ACC configuration, retaining the persisted session."""
+    settings = get_settings()
+    if not device.adms_session_id:
+        # This is only a defensive fallback for legacy rows created before the
+        # Security PUSH migration.  Normal registration always creates it.
+        device.adms_session_id = _new_push_identifier()
+    return {
+        "server_version": settings.zkteco_server_version,
+        "server_name": settings.zkteco_server_name,
+        "push_protocol_version": settings.zkteco_push_protocol_version,
+        "error_delay": settings.zkteco_error_delay_s,
+        "request_delay": settings.zkteco_request_delay_s,
+        "trans_times": settings.zkteco_trans_times,
+        "trans_interval": settings.zkteco_trans_interval_m,
+        "trans_tables": settings.zkteco_trans_tables,
+        "realtime": settings.zkteco_realtime,
+        "session_id": device.adms_session_id,
+        "timeout_sec": settings.zkteco_push_timeout_s,
+    }
+
+
 # ---------------------------------------------------------------------------
 # /iclock/cdata
 # ---------------------------------------------------------------------------
@@ -145,22 +189,31 @@ async def handle_cdata(
         await session.rollback()
         return device
 
-    # Push-options handshake (§26, real-hardware behavior): the firmware polls
-    # `GET /iclock/cdata?...&options=all` expecting its upload configuration
-    # (TransFlag/Realtime). Answer ONLY the options block here — pending `C:`
-    # commands are delivered exclusively via /iclock/getrequest, never mixed
-    # into this response (acc firmwares misparse mixed bodies and stay silent).
-    # No payload row is stored: this poll fires every ~15s per device.
-    # NOTE: deviates from docs/ADMS_PROTOCOL.md §2/§4 (drain-on-handshake),
-    # which never covered options=all; TransFlag bits are unverified, tunable
-    # via ZKTECO_TRANS_FLAG.
-    if request.query_params.get("options", "").lower() == "all":
+    # There are two incompatible PUSH handshakes.  Attendance terminals use
+    # the legacy TransFlag block; access-control panels (DeviceType=acc) first
+    # receive OK, register, then obtain Security PUSH config through /push.
+    # Never treat a POST as this handshake: otherwise a device data payload
+    # carrying options=all would be acknowledged and silently discarded.
+    if request.method == "GET" and request.query_params.get("options", "").lower() == "all":
         device.last_cdata_at = _utcnow()
+        if _is_security_push_device(request, device):
+            if device.adms_registry_code:
+                response = PlainTextResponse(
+                    wire_security_push_options(
+                        registry_code=device.adms_registry_code,
+                        **_security_push_kwargs(device),
+                    ),
+                    status_code=200,
+                )
+            else:
+                response = PlainTextResponse(wire_ok(), status_code=200)
+        else:
+            response = PlainTextResponse(
+                wire_push_options(sn, trans_flag=get_settings().zkteco_trans_flag),
+                status_code=200,
+            )
         await session.commit()
-        return PlainTextResponse(
-            wire_push_options(sn, trans_flag=get_settings().zkteco_trans_flag),
-            status_code=200,
-        )
+        return response
 
     table = request.query_params.get("table", "").upper()
     text = body.decode("utf-8", errors="replace")
@@ -168,7 +221,9 @@ async def handle_cdata(
 
     try:
         if table == "ATTLOG":
-            response_text = await _handle_attlog(session, device, request, text)
+            response_text = await _handle_attlog(session, device, request, body, text)
+        elif table == "RTLOG":
+            response_text = await _handle_rtlog(session, device, request, body, text)
         elif table == "OPERLOG":
             payload = await _store_payload(
                 session,
@@ -186,6 +241,8 @@ async def handle_cdata(
             response_text = wire_ok()
         elif table == "USERINFO":
             response_text = await _handle_userinfo(session, device, request, text)
+        elif table == "OPTIONS":
+            response_text = await _handle_options(session, device, request, body, text)
         else:
             response_text = await _handle_info_or_commands(session, device, request, text)
         device.last_cdata_at = _utcnow()
@@ -199,13 +256,15 @@ async def handle_cdata(
     return PlainTextResponse(response_text, status_code=200)
 
 
-async def _handle_attlog(session: AsyncSession, device: Device, request: Request, text: str) -> str:
+async def _handle_attlog(
+    session: AsyncSession, device: Device, request: Request, body: bytes, text: str
+) -> str:
     payload = await _store_payload(
         session,
         device=device,
         endpoint="cdata",
         request=request,
-        body=text.encode("utf-8"),
+        body=body,
         data_type="ATTLOG",
     )
     records, stats = adms_parser.parse_attlog(text, device.serial_number, device.timezone)
@@ -218,6 +277,34 @@ async def _handle_attlog(session: AsyncSession, device: Device, request: Request
         payload.error_message = f"skipped {stats.skipped}/{stats.total} malformed lines"
         log.warning("attlog_malformed", serial=device.serial_number, skipped=stats.skipped)
     return wire_attlog_ack(inserted)
+
+
+async def _handle_rtlog(
+    session: AsyncSession, device: Device, request: Request, body: bytes, text: str
+) -> str:
+    """Persist Security PUSH access events as attendance records.
+
+    ACC firmware posts this table for a biometric/card check; it does not use
+    the legacy ATTLOG table.  Its acknowledgement is exactly ``OK``.
+    """
+    payload = await _store_payload(
+        session,
+        device=device,
+        endpoint="cdata",
+        request=request,
+        body=body,
+        data_type="RTLOG",
+    )
+    records, stats = adms_parser.parse_rtlog(text, device.serial_number, device.timezone)
+    await attendance_svc.ingest_records(
+        session, device=device, records=records, raw_payload_id=payload.id
+    )
+    payload.processing_status = "processed" if not stats.skipped else "partial"
+    payload.processed_at = _utcnow()
+    if stats.skipped:
+        payload.error_message = f"skipped {stats.skipped}/{stats.total} malformed RTLOG lines"
+        log.warning("rtlog_malformed", serial=device.serial_number, skipped=stats.skipped)
+    return wire_ok()
 
 
 async def _handle_userinfo(
@@ -234,6 +321,25 @@ async def _handle_userinfo(
     users, stats = adms_parser.parse_userinfo(text, device.serial_number)
     await device_user_svc.sync_from_device(session, device=device, users=users)
     payload.processing_status = "processed" if not stats.skipped else "partial"
+    payload.processed_at = _utcnow()
+    return wire_ok()
+
+
+async def _handle_options(
+    session: AsyncSession, device: Device, request: Request, body: bytes, text: str
+) -> str:
+    """Accept Security PUSH device parameters posted as ``table=options``."""
+    payload = await _store_payload(
+        session,
+        device=device,
+        endpoint="cdata",
+        request=request,
+        body=body,
+        data_type="OPTIONS",
+    )
+    info = adms_parser.parse_registry_body(text)
+    device_svc.merge_options(device, info)
+    payload.processing_status = "processed"
     payload.processed_at = _utcnow()
     return wire_ok()
 
@@ -288,6 +394,7 @@ async def handle_registry(
     try:
         re_registered = device.last_registry_at is not None
         device.last_registry_at = _utcnow()
+        info: dict[str, str] = {}
         if text.strip():
             payload = await _store_payload(
                 session,
@@ -307,6 +414,13 @@ async def handle_registry(
                 event_type="device_re_registered" if re_registered else "device_registered",
                 payload=info,
             )
+        is_security_push = info.get("DeviceType", "").lower() == "acc" or (
+            (device.options or {}).get("DeviceType", "").lower() == "acc"
+        )
+        if is_security_push:
+            device.adms_registry_code = _new_push_identifier()
+            device.adms_session_id = _new_push_identifier()
+            device.push_protocol = request.query_params.get("pushver") or info.get("PushVersion")
         await session.commit()
     except Exception as exc:
         # M-04: registry state may not have been stored — 500/"ERROR" so the
@@ -314,7 +428,52 @@ async def handle_registry(
         await session.rollback()
         log.error("registry_error", serial=sn, error=str(exc))
         return PlainTextResponse("ERROR", status_code=500)
+    if device.adms_registry_code:
+        return PlainTextResponse(
+            wire_registry_code(device.adms_registry_code),
+            status_code=200,
+            headers={"Set-Cookie": f"JSESSIONID={device.adms_session_id}; Path=/; HttpOnly"},
+        )
     return PlainTextResponse(wire_ok(), status_code=200)
+
+
+# ---------------------------------------------------------------------------
+# /iclock/push — Security PUSH configuration after ACC registration
+# ---------------------------------------------------------------------------
+
+
+@router.api_route("/push", methods=["GET", "POST"])
+async def handle_push(
+    request: Request, session: AsyncSession = Depends(get_db)
+) -> PlainTextResponse:
+    sn = _sn_or_error(request)
+    if isinstance(sn, PlainTextResponse):
+        return sn
+    if not await check_adms_limit(request, serial=sn, endpoint="push"):
+        return PlainTextResponse("Rate limit exceeded", status_code=429)
+    body = await request.body()
+    if _body_too_large(request, body):
+        return PlainTextResponse("Request body too large", status_code=413)
+
+    device = await _require_device(session, serial=sn)
+    if isinstance(device, PlainTextResponse):
+        await session.rollback()
+        return device
+    if not device.adms_registry_code:
+        # A panel must complete /registry before it can establish a PUSH
+        # session. Returning OK makes it retry registration without exposing
+        # configuration to an unknown device.
+        await session.commit()
+        return PlainTextResponse(wire_ok(), status_code=200)
+    try:
+        device.last_cdata_at = _utcnow()
+        response_text = wire_security_push_config(**_security_push_kwargs(device))
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        log.error("push_error", serial=sn, error=str(exc))
+        return PlainTextResponse("ERROR", status_code=500)
+    return PlainTextResponse(response_text, status_code=200)
 
 
 # ---------------------------------------------------------------------------

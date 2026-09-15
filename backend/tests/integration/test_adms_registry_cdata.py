@@ -45,6 +45,16 @@ def test_cdata_attlog_idempotent(app_client) -> None:  # type: ignore[no-untyped
     assert second.text == "OK: 0"  # duplicate skipped, no double insert
 
 
+def test_cdata_rtlog_persists_security_push_attendance(app_client) -> None:  # type: ignore[no-untyped-def]
+    body = (
+        "time=2024-03-15 08:30:00\tpin=1001\tcardno=0\teventaddr=1\t"
+        "event=27\tinoutstatus=0\tverifytype=15\tindex=21"
+    )
+    response = app_client.post("/iclock/cdata?SN=ACC001&table=rtlog", content=body)
+    assert response.status_code == 200
+    assert response.text == "OK"
+
+
 def test_cdata_attlog_malformed_partial(app_client) -> None:  # type: ignore[no-untyped-def]
     body = "1001\t2024-03-15 08:30:00\t0\t1\t\nGARBAGE\n\t\n1002\tbad-ts\t0\t1\t"
     response = app_client.post("/iclock/cdata?SN=MAL001&table=ATTLOG", content=body)

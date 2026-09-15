@@ -86,6 +86,11 @@ nohup.out
 Thumbs.db
 desktop.ini
 
+# Capturas de sesiones ADMS: pueden contener PIN, tarjeta, biometría y cookies.
+captures/
+*.pcap
+*.pcapng
+
 # ============================================================
 # Editores e IDEs
 # ============================================================

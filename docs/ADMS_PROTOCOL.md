@@ -6,6 +6,11 @@ Ante duda: repositorio → tests → código → documentar incertidumbre →
 fixture → implementar → validar contra dispositivo real (§75).
 Objetivo prioritario: **SpeedFace-V5LP** (§76).
 
+> Corrección validada contra el manual Security PUSH: no hay un único dialecto
+> ADMS. Los terminales de asistencia legados y los paneles con
+> `DeviceType=acc` usan handshakes y tablas distintos. Este documento separa
+> ambos; el soporte de `acc` no debe inferirse de ejemplos `ATTLOG`.
+
 ## 1. Endpoints (§26)
 
 ```text
@@ -16,6 +21,7 @@ POST /iclock/registry?SN=<serial>                 (body = registry KV)
 GET  /iclock/getrequest?SN=<serial>               (poll de comandos)
 POST /iclock/devicecmd?SN=<serial>                (confirmaciones)
 GET  /iclock/inspect                             (debug JSON, deshabilitado por defecto, §26)
+GET/POST /iclock/push?SN=<serial>                (Security PUSH: config tras registry)
 ```
 
 - ADMS **sin JWT** (§27). Autenticación = validación de `SN` + registro.
@@ -34,7 +40,8 @@ GET  /iclock/inspect                             (debug JSON, deshabilitado por 
 | Caso | Respuesta `text/plain` |
 |---|---|
 | Sin comandos pendientes (getrequest / cdata handshake) | `OK` |
-| Push-options handshake (`GET /iclock/cdata?...&options=all`) | Bloque `GET OPTION FROM:` + `TransFlag`/`Realtime` (CRLF, §26; **sin** líneas `C:`, que solo viajan en getrequest) |
+| Handshake legado (`GET /iclock/cdata?...&options=all`) | Bloque `GET OPTION FROM:` + `TransFlag`/`Realtime` (CRLF; sin líneas `C:`) |
+| Handshake Security PUSH (`DeviceType=acc`) | `OK` inicial → `POST /registry` responde `RegistryCode` → `GET/POST /push` entrega `TransTables=User Transaction` y `PushProtVer=3.1.2` |
 | ATTLOG procesado, N válidos | `OK: N` |
 | OPERLOG | `OK` |
 | USERINFO / registry / devicecmd / device-info | `OK` |
@@ -66,13 +73,16 @@ reloj pueden haberse perdido se responde `500`+`ERROR` para forzar reintento
 Clasificación por query `table`:
 
 - `ATTLOG` → §4.1. Respuesta `OK: N`.
+- `RTLOG` → asistencia en tiempo real de Security PUSH (`DeviceType=acc`),
+  formato `time=...\tpin=...\tinoutstatus=...\tverifytype=...`; respuesta
+  exacta `OK`.
 - `OPERLOG` → `OK` (se persiste payload + evento `operlog_received` a nivel `debug`).
 - `USERINFO` → §4.3. Respuesta `OK`.
 - ausente/otro → device-info (§4.4) en POST + drenar comandos (igual que getrequest).
-- EXCEPCIÓN: con query `options=all` (handshake de opciones del firmware, §26)
-  se responde el bloque push-options y NO se drenan comandos: varios firmwares
-  acc ignoran cuerpos mezclados y jamás suben tablas. TransFlag configurable vía
-  `ZKTECO_TRANS_FLAG` (bits sin verificar en hardware).
+- EXCEPCIÓN: `GET` con `options=all` es handshake; un `POST` nunca se clasifica
+  como handshake, aunque lleve ese parámetro, para no descartar datos. Para
+  `DeviceType=acc`, `TransFlag` no habilita eventos: se completa el flujo
+  Security PUSH y se entrega `TransTables=User Transaction`.
 
 Pipeline (§30): `raw → validate → payload classify → parser → DTO →
 validation → service → DB → event → response`.

@@ -42,11 +42,22 @@ class Settings(BaseSettings):
     zkteco_default_timezone: str = Field(default="UTC")
     # Device USERINFO `Password=` field: never persisted unless explicitly enabled.
     zkteco_persist_device_password: bool = Field(default=False)
-    # Push-upload handshake answered to `GET /iclock/cdata?...&options=all`
-    # (§26). TransFlag bit positions are unverified on hardware: the default
-    # enables the leading transaction/operlog positions only (attendance +
-    # users channel, no photos/BIO). Restart picks up changes.
-    zkteco_trans_flag: str = Field(default="1100000000")
+    # Legacy attendance-terminal handshake.  ACC/Security PUSH terminals use
+    # TransTables instead (see the settings below).
+    zkteco_trans_flag: str = Field(default="1111000000")
+    # Security PUSH 3.x configuration (used by DeviceType=acc, e.g. SpeedFace
+    # access-control panels).  The terminal selects the earlier of this and
+    # its own advertised protocol version.
+    zkteco_push_protocol_version: str = Field(default="3.1.2")
+    zkteco_server_version: str = Field(default="3.1.2")
+    zkteco_server_name: str = Field(default="ADMS")
+    zkteco_error_delay_s: int = Field(default=60)
+    zkteco_request_delay_s: int = Field(default=30)
+    zkteco_trans_times: str = Field(default="00:00;14:05")
+    zkteco_trans_interval_m: int = Field(default=1)
+    zkteco_trans_tables: str = Field(default="User Transaction")
+    zkteco_realtime: int = Field(default=1)
+    zkteco_push_timeout_s: int = Field(default=10)
 
     # --- JWT RS256 ---
     jwt_private_key: str = Field(default="")

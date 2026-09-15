@@ -149,6 +149,56 @@ def parse_attlog(
     return records, stats
 
 
+def parse_rtlog(
+    data: str, serial_number: str, timezone_name: str = "UTC"
+) -> tuple[list[AttendanceRecord], ParseStats]:
+    """Parse Security PUSH ``table=rtlog`` access events as attendance.
+
+    Access-control firmware (``DeviceType=acc``) does not send the legacy
+    ``ATTLOG`` tab layout.  It sends tab-separated ``key=value`` fields such
+    as ``time``, ``pin``, ``inoutstatus`` and ``verifytype`` instead.  Keep the
+    original line so unmapped access-control details remain auditable.
+    """
+    stats = ParseStats()
+    records: list[AttendanceRecord] = []
+    tz = _resolve_tz(timezone_name)
+    for raw_line in data.strip().strip("\n\r").split("\n"):
+        line = raw_line.rstrip("\r")
+        if not line.strip():
+            continue
+        stats.total += 1
+        fields: dict[str, str] = {}
+        for part in line.split("\t"):
+            key, sep, value = part.partition("=")
+            if sep:
+                fields[key.strip().lower()] = value.strip()
+        pin = fields.get("pin", "")
+        timestamp_value = fields.get("time", "")
+        if not pin:
+            stats.skipped += 1
+            stats.errors.append("RTLOG line without pin")
+            continue
+        timestamp = parse_timestamp(timestamp_value, tz)
+        if timestamp is None:
+            stats.skipped += 1
+            stats.errors.append(f"unparseable RTLOG time: {timestamp_value!r}")
+            continue
+        records.append(
+            AttendanceRecord(
+                user_id=pin,
+                timestamp=timestamp,
+                # Security PUSH defines 0 as In and 1 as Out, matching the
+                # existing attendance status values.
+                status=_parse_int_or_default(fields.get("inoutstatus")),
+                verify_mode=_parse_int_or_default(fields.get("verifytype")),
+                serial_number=serial_number,
+                raw_line=line,
+            )
+        )
+        stats.valid += 1
+    return records, stats
+
+
 def parse_kv_pairs(
     data: str,
     separator: str = "\n",
@@ -282,6 +332,7 @@ __all__ = [
     "parse_device_info",
     "parse_kv_pairs",
     "parse_registry_body",
+    "parse_rtlog",
     "parse_timestamp",
     "parse_userinfo",
     "trim_tilde_prefix",

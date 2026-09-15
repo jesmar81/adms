@@ -17,6 +17,7 @@ ZKTeco (prioridad: **SpeedFace-V5LP**): gateway ADMS con **FastAPI** + **Postgre
 > `https://github.com/athwari/laravel-zkteco-adms-server`
 
 - Protocolo ADMS: [`docs/ADMS_PROTOCOL.md`](docs/ADMS_PROTOCOL.md)
+- Captura de reloj real: [`docs/REAL_DEVICE_CAPTURE.md`](docs/REAL_DEVICE_CAPTURE.md)
 - Base de datos: [`docs/DATABASE.md`](docs/DATABASE.md)
 - Seguridad: [`docs/SECURITY.md`](docs/SECURITY.md)
 - Testing: [`docs/TESTING.md`](docs/TESTING.md)

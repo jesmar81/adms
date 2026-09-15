@@ -57,6 +57,11 @@ class Device(Base, UUIDPKMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # Security PUSH (DeviceType=acc) registration/session identifiers.  They
+    # are protocol state, not credentials exposed through the admin API.
+    adms_registry_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    adms_session_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
 
     # Monotonic per-device wire-command counter (M-08: allocated under row lock).
