@@ -19,6 +19,7 @@ ZKTeco (prioridad: **SpeedFace-V5LP**): gateway ADMS con **FastAPI** + **Postgre
 - Protocolo ADMS: [`docs/ADMS_PROTOCOL.md`](docs/ADMS_PROTOCOL.md)
 - Captura de reloj real: [`docs/REAL_DEVICE_CAPTURE.md`](docs/REAL_DEVICE_CAPTURE.md)
 - Dominio de personal y asistencia multiempresa: [`docs/HR_ATTENDANCE_DOMAIN_PLAN.md`](docs/HR_ATTENDANCE_DOMAIN_PLAN.md)
+- Calendario laboral mexicano y protección de expediente: [`docs/HR_CALENDARS_MX.md`](docs/HR_CALENDARS_MX.md)
 - Base de datos: [`docs/DATABASE.md`](docs/DATABASE.md)
 - Seguridad: [`docs/SECURITY.md`](docs/SECURITY.md)
 - Testing: [`docs/TESTING.md`](docs/TESTING.md)

@@ -59,5 +59,33 @@ services:
     depends_on:
       - backend
 
+  hr-calendar-worker:
+    profiles: ["hr-automation"]
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://zkteco:zkteco@postgres:5432/zkteco_adms
+      REDIS_URL: redis://redis:6379/0
+    command: celery -A app.workers.celery_app:celery_app worker --loglevel=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  hr-calendar-beat:
+    profiles: ["hr-automation"]
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://zkteco:zkteco@postgres:5432/zkteco_adms
+      REDIS_URL: redis://redis:6379/0
+    command: celery -A app.workers.celery_app:celery_app beat --loglevel=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   pgdata:

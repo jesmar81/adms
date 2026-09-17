@@ -11,6 +11,7 @@ from app.api.v1.hr import (
     employments_router,
     enrollments_router,
     groups_router,
+    holidays_router,
     people_router,
     schedules_router,
     sites_router,
@@ -32,6 +33,7 @@ router.include_router(sites_router)
 router.include_router(people_router)
 router.include_router(employments_router)
 router.include_router(schedules_router)
+router.include_router(holidays_router)
 router.include_router(enrollments_router)
 router.include_router(attendance_router)
 router.include_router(device_users_router)

@@ -88,9 +88,51 @@ class Person(Base, UUIDPKMixin, TimestampMixin):
     preferred_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sex: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    marital_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    nationality: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    birth_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    address_street: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    address_ext_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    address_int_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    address_neighborhood: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    address_municipality: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    address_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    emergency_contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    emergency_contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    emergency_contact_relationship: Mapped[str | None] = mapped_column(String(80), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     __table_args__ = (Index("ix_people_group", "corporate_group_id"),)
+
+
+class PersonSensitiveIdentifier(Base, UUIDPKMixin, TimestampMixin):
+    """Encrypted Mexican tax and social-security identifiers for one person.
+
+    The application key is deployment-owned.  Plaintext values are never
+    persisted or included in audit metadata.
+    """
+
+    __tablename__ = "person_sensitive_identifiers"
+
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("people.id", ondelete="CASCADE"), nullable=False
+    )
+    curp_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rfc_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nss_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    curp_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rfc_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    nss_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("person_id", name="uq_person_sensitive_identifiers_person"),
+        Index("ix_person_sensitive_identifiers_curp_hash", "curp_hash"),
+        Index("ix_person_sensitive_identifiers_rfc_hash", "rfc_hash"),
+        Index("ix_person_sensitive_identifiers_nss_hash", "nss_hash"),
+    )
 
 
 class Employment(Base, UUIDPKMixin, TimestampMixin):
@@ -140,6 +182,26 @@ class WorkSchedule(Base, UUIDPKMixin, TimestampMixin):
     )
 
 
+class Holiday(Base, UUIDPKMixin, TimestampMixin):
+    """Company calendar day, generated from law or explicitly declared by HR."""
+
+    __tablename__ = "holidays"
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False
+    )
+    holiday_date: Mapped[date] = mapped_column(Date, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    is_paid_rest: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    generated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('statutory','company','electoral')", name="ck_holidays_kind"),
+        UniqueConstraint("company_id", "holiday_date", name="uq_holidays_company_date"),
+        Index("ix_holidays_company_date", "company_id", "holiday_date"),
+    )
 class ScheduleSlot(Base, UUIDPKMixin, TimestampMixin):
     __tablename__ = "schedule_slots"
 

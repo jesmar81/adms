@@ -124,6 +124,75 @@ async def test_acc_security_push_blocks_unvalidated_legacy_user_wire(life_client
     assert response.json()["error"]["code"] == "DEVICE_PROTOCOL_EVIDENCE_REQUIRED"
 
 
+async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-untyped-def]
+    life_client, settings, monkeypatch
+) -> None:
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setattr(settings, "hr_pii_encryption_key", Fernet.generate_key().decode())
+    group = (
+        await life_client.post(
+            "/api/v1/corporate-groups", json={"name": "Grupo", "code": "GRP"}
+        )
+    ).json()
+    company = (
+        await life_client.post(
+            "/api/v1/companies", json={"corporate_group_id": group["id"], "legal_name": "Empresa"}
+        )
+    ).json()
+    person = (
+        await life_client.post(
+            "/api/v1/people",
+            json={"corporate_group_id": group["id"], "first_name": "Ana", "last_name": "López"},
+        )
+    ).json()
+    updated = await life_client.patch(
+        f"/api/v1/people/{person['id']}", json={"birth_date": "1990-01-02", "postal_code": "06000"}
+    )
+    assert updated.json()["postal_code"] == "06000"
+    identifiers = await life_client.put(
+        f"/api/v1/people/{person['id']}/sensitive",
+        json={"curp": "LOPA900102HDFXXX01", "rfc": "LOPA900102AB1", "nss": "12345678901"},
+    )
+    assert identifiers.json()["curp"] == "LOPA900102HDFXXX01"
+    slots = [
+        {"day_of_week": day, "kind": kind, "expected_at": value}
+        for day in range(5)
+        for kind, value in (("entry", "09:00"), ("exit", "18:00"))
+    ]
+    schedule = (
+        await life_client.post(
+            "/api/v1/work-schedules",
+            json={"company_id": company["id"], "name": "L-V", "slots": slots},
+        )
+    ).json()
+    employment = (
+        await life_client.post(
+            f"/api/v1/people/{person['id']}/employments",
+            json={
+                "company_id": company["id"],
+                "employee_number": "A-01",
+                "started_on": "2026-01-01",
+            },
+        )
+    ).json()
+    assignment = await life_client.post(
+        f"/api/v1/employments/{employment['id']}/schedule-assignments",
+        json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-01"},
+    )
+    assert assignment.status_code == 201
+    holiday_path = f"/api/v1/companies/{company['id']}/holidays/generate?year=2026"
+    generated = await life_client.post(holiday_path)
+    assert generated.json() == {"year": 2026, "created": 7, "existing": 0}
+    repeated = await life_client.post(holiday_path)
+    assert repeated.json() == {"year": 2026, "created": 0, "existing": 7}
+    custom = await life_client.post(
+        "/api/v1/holidays",
+        json={"company_id": company["id"], "holiday_date": "2026-12-24", "name": "Día interno"},
+    )
+    assert custom.status_code == 201
+
+
 async def test_security_push_capabilities_are_evidence_based(life_client) -> None:  # type: ignore[no-untyped-def]
     device_id = await _device_id(life_client, "ACCCAPS1")
     await life_client.post("/iclock/registry?SN=ACCCAPS1", content="DeviceType=acc")

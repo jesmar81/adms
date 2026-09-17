@@ -95,7 +95,28 @@ export interface Person {
   preferred_name: string | null;
   email: string | null;
   phone: string | null;
+  birth_date: string | null;
+  sex: string | null;
+  marital_status: string | null;
+  nationality: string | null;
+  birth_state: string | null;
+  address_street: string | null;
+  address_ext_number: string | null;
+  address_int_number: string | null;
+  address_neighborhood: string | null;
+  address_municipality: string | null;
+  address_state: string | null;
+  postal_code: string | null;
+  emergency_contact_name: string | null;
+  emergency_contact_phone: string | null;
+  emergency_contact_relationship: string | null;
   active: boolean;
+}
+
+export interface PersonSensitiveIdentifiers {
+  curp: string | null;
+  rfc: string | null;
+  nss: string | null;
 }
 
 export interface Employment {
@@ -134,6 +155,26 @@ export interface WorkSchedule {
   version: number;
   active: boolean;
   slots: ScheduleSlot[];
+}
+
+export interface ScheduleAssignment {
+  id: string;
+  employment_id: string;
+  work_schedule_id: string;
+  effective_from: string;
+  effective_to: string | null;
+  active: boolean;
+}
+
+export interface Holiday {
+  id: string;
+  company_id: string;
+  holiday_date: string;
+  name: string;
+  kind: "statutory" | "company" | "electoral";
+  source: string | null;
+  is_paid_rest: boolean;
+  generated: boolean;
 }
 
 export interface EnrollmentRequest {

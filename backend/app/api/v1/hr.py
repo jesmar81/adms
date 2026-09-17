@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from json import JSONDecodeError, dumps, loads
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -24,9 +24,15 @@ from app.api.v1.schemas import (
     EnrollmentRequestIn,
     EnrollmentRequestOut,
     EnrollmentRequestStatusIn,
+    HolidayGenerationOut,
+    HolidayIn,
+    HolidayOut,
     PersonAttendancePageOut,
     PersonIn,
     PersonOut,
+    PersonPatch,
+    PersonSensitiveIdentifiersIn,
+    PersonSensitiveIdentifiersOut,
     ScheduleAssignmentIn,
     ScheduleAssignmentOut,
     ScheduleSlotOut,
@@ -42,7 +48,9 @@ from app.models.hr import (
     CorporateGroup,
     Employment,
     EnrollmentRequest,
+    Holiday,
     Person,
+    PersonSensitiveIdentifier,
     ScheduleAssignment,
     ScheduleSlot,
     Site,
@@ -50,6 +58,12 @@ from app.models.hr import (
 )
 from app.models.user import User
 from app.services import audit as audit_svc
+from app.services.holidays import ensure_statutory_holidays
+from app.services.hr_pii import (
+    PiiEncryptionUnavailableError,
+    decrypt_identifier,
+    encrypt_identifier,
+)
 
 
 def _validate_timezone(value: str) -> None:
@@ -238,6 +252,102 @@ async def get_person(
     return row
 
 
+@people_router.patch("/{person_id}", response_model=PersonOut)
+async def update_person(
+    person_id: uuid.UUID,
+    payload: PersonPatch,
+    user: User = Depends(deps.require_permission("people.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> Person:
+    row = await session.get(Person, person_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return row
+    for key, value in changes.items():
+        setattr(row, key, value)
+    await session.flush()
+    await _audit(session, user, "person.update", "person", row.id, rid)
+    await session.commit()
+    return row
+
+
+def _pii_unavailable(exc: PiiEncryptionUnavailableError) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="HR sensitive identifiers are unavailable: configure ZKTECO_HR_PII_ENCRYPTION_KEY",
+    )
+
+
+@people_router.get("/{person_id}/sensitive", response_model=PersonSensitiveIdentifiersOut)
+async def get_person_sensitive_identifiers(
+    person_id: uuid.UUID,
+    _user: User = Depends(deps.require_permission("people.write")),
+    session: AsyncSession = Depends(get_db),
+) -> PersonSensitiveIdentifiersOut:
+    if await session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    row = await session.scalar(
+        select(PersonSensitiveIdentifier).where(PersonSensitiveIdentifier.person_id == person_id)
+    )
+    if row is None:
+        return PersonSensitiveIdentifiersOut()
+    try:
+        return PersonSensitiveIdentifiersOut(
+            curp=decrypt_identifier(row.curp_encrypted) if row.curp_encrypted else None,
+            rfc=decrypt_identifier(row.rfc_encrypted) if row.rfc_encrypted else None,
+            nss=decrypt_identifier(row.nss_encrypted) if row.nss_encrypted else None,
+        )
+    except PiiEncryptionUnavailableError as exc:
+        raise _pii_unavailable(exc) from exc
+
+
+@people_router.put("/{person_id}/sensitive", response_model=PersonSensitiveIdentifiersOut)
+async def update_person_sensitive_identifiers(
+    person_id: uuid.UUID,
+    payload: PersonSensitiveIdentifiersIn,
+    user: User = Depends(deps.require_permission("people.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> PersonSensitiveIdentifiersOut:
+    if await session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    try:
+        row = await session.scalar(
+            select(PersonSensitiveIdentifier).where(
+                PersonSensitiveIdentifier.person_id == person_id
+            )
+        )
+        if row is None:
+            row = PersonSensitiveIdentifier(person_id=person_id)
+            session.add(row)
+        for field in ("curp", "rfc", "nss"):
+            if field not in payload.model_fields_set:
+                continue
+            value = getattr(payload, field)
+            encrypted_field = f"{field}_encrypted"
+            hash_field = f"{field}_hash"
+            if value is None:
+                setattr(row, encrypted_field, None)
+                setattr(row, hash_field, None)
+            else:
+                encrypted, digest = encrypt_identifier(value)
+                setattr(row, encrypted_field, encrypted)
+                setattr(row, hash_field, digest)
+        await session.flush()
+        await _audit(session, user, "person.sensitive_identifiers.update", "person", person_id, rid)
+        await session.commit()
+        return PersonSensitiveIdentifiersOut(
+            curp=decrypt_identifier(row.curp_encrypted) if row.curp_encrypted else None,
+            rfc=decrypt_identifier(row.rfc_encrypted) if row.rfc_encrypted else None,
+            nss=decrypt_identifier(row.nss_encrypted) if row.nss_encrypted else None,
+        )
+    except PiiEncryptionUnavailableError as exc:
+        raise _pii_unavailable(exc) from exc
+
+
 @people_router.get("/{person_id}/attendance", response_model=PersonAttendancePageOut)
 async def list_person_attendance(
     person_id: uuid.UUID,
@@ -346,6 +456,69 @@ async def create_employment(
 schedules_router = APIRouter(prefix="/work-schedules", tags=["work-schedules"])
 
 
+holidays_router = APIRouter(prefix="/holidays", tags=["holidays"])
+
+
+@holidays_router.get("", response_model=list[HolidayOut])
+async def list_holidays(
+    company_id: uuid.UUID,
+    year: int | None = Query(default=None, ge=2000, le=2200),
+    _user: User = Depends(deps.require_permission("schedules.read")),
+    session: AsyncSession = Depends(get_db),
+) -> list[Holiday]:
+    query = select(Holiday).where(Holiday.company_id == company_id).order_by(Holiday.holiday_date)
+    if year is not None:
+        query = query.where(
+            Holiday.holiday_date >= date(year, 1, 1), Holiday.holiday_date <= date(year, 12, 31)
+        )
+    return list((await session.execute(query)).scalars())
+
+
+@holidays_router.post("", response_model=HolidayOut, status_code=201)
+async def create_holiday(
+    payload: HolidayIn,
+    user: User = Depends(deps.require_permission("schedules.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> Holiday:
+    if await session.get(Company, payload.company_id) is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    existing = await session.scalar(
+        select(Holiday).where(
+            Holiday.company_id == payload.company_id, Holiday.holiday_date == payload.holiday_date
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="A holiday already exists on this company date")
+    row = Holiday(**payload.model_dump(), source="company", generated=False)
+    session.add(row)
+    await session.flush()
+    await _audit(session, user, "holiday.create", "holiday", row.id, rid)
+    await session.commit()
+    return row
+
+
+@companies_router.post("/{company_id}/holidays/generate", response_model=HolidayGenerationOut)
+async def generate_holidays(
+    company_id: uuid.UUID,
+    year: int = Query(ge=2000, le=2200),
+    user: User = Depends(deps.require_permission("schedules.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> HolidayGenerationOut:
+    if await session.get(Company, company_id) is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    created, existing = await ensure_statutory_holidays(session, company_id, year)
+    await session.flush()
+    await _audit(session, user, "holiday.generate_statutory", "company", company_id, rid)
+    await session.commit()
+    return HolidayGenerationOut(
+        year=year,
+        created=created,
+        existing=existing,
+    )
+
+
 def _schedule_out(row: WorkSchedule, slots: list[ScheduleSlot]) -> WorkScheduleOut:
     return WorkScheduleOut(
         id=row.id,
@@ -399,6 +572,18 @@ async def create_work_schedule(
     positions = {(slot.day_of_week, slot.kind, slot.sequence) for slot in payload.slots}
     if len(positions) != len(payload.slots):
         raise HTTPException(status_code=422, detail="Duplicate schedule slot position")
+    worked_days = {slot.day_of_week for slot in payload.slots}
+    days_off = 7 - len(worked_days)
+    if days_off not in (1, 2):
+        raise HTTPException(
+            status_code=422, detail="A schedule must define one or two weekly days off"
+        )
+    for day in worked_days:
+        kinds = {slot.kind for slot in payload.slots if slot.day_of_week == day}
+        if not {"entry", "exit"}.issubset(kinds):
+            raise HTTPException(
+                status_code=422, detail="Each working day requires entry and exit slots"
+            )
     row = WorkSchedule(
         company_id=payload.company_id,
         name=payload.name,
@@ -432,12 +617,46 @@ async def assign_schedule(
         raise HTTPException(status_code=422, detail="Schedule belongs to another company")
     if payload.effective_to is not None and payload.effective_to < payload.effective_from:
         raise HTTPException(status_code=422, detail="effective_to must not precede effective_from")
+    conflicts = select(ScheduleAssignment).where(
+        ScheduleAssignment.employment_id == employment_id,
+        ScheduleAssignment.active.is_(True),
+        ScheduleAssignment.effective_from <= (payload.effective_to or date.max),
+        or_(
+            ScheduleAssignment.effective_to.is_(None),
+            ScheduleAssignment.effective_to >= payload.effective_from,
+        ),
+    )
+    if await session.scalar(conflicts) is not None:
+        raise HTTPException(
+            status_code=409, detail="Schedule assignment overlaps an existing assignment"
+        )
     row = ScheduleAssignment(employment_id=employment_id, **payload.model_dump())
     session.add(row)
     await session.flush()
     await _audit(session, user, "schedule_assignment.create", "schedule_assignment", row.id, rid)
     await session.commit()
     return row
+
+
+@employments_router.get(
+    "/{employment_id}/schedule-assignments", response_model=list[ScheduleAssignmentOut]
+)
+async def list_schedule_assignments(
+    employment_id: uuid.UUID,
+    _user: User = Depends(deps.require_permission("schedules.read")),
+    session: AsyncSession = Depends(get_db),
+) -> list[ScheduleAssignment]:
+    if await session.get(Employment, employment_id) is None:
+        raise HTTPException(status_code=404, detail="Employment not found")
+    return list(
+        (
+            await session.execute(
+                select(ScheduleAssignment)
+                .where(ScheduleAssignment.employment_id == employment_id)
+                .order_by(ScheduleAssignment.effective_from.desc())
+            )
+        ).scalars()
+    )
 
 
 enrollments_router = APIRouter(prefix="/enrollment-requests", tags=["enrollment-requests"])

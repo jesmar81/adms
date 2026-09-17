@@ -11,9 +11,12 @@ import type {
   DeviceUser,
   Employment,
   EnrollmentRequest,
+  Holiday,
   Me,
   Person,
   PersonAttendancePage,
+  PersonSensitiveIdentifiers,
+  ScheduleAssignment,
   Site,
   WorkSchedule,
 } from "@/types";
@@ -227,6 +230,18 @@ class ApiClient {
     return this.request("/api/v1/people", { method: "POST", body: JSON.stringify(body) });
   }
 
+  updatePerson(personId: string, body: Record<string, unknown>): Promise<Person> {
+    return this.request(`/api/v1/people/${personId}`, { method: "PATCH", body: JSON.stringify(body) });
+  }
+
+  personSensitive(personId: string): Promise<PersonSensitiveIdentifiers> {
+    return this.request(`/api/v1/people/${personId}/sensitive`);
+  }
+
+  updatePersonSensitive(personId: string, body: Record<string, unknown>): Promise<PersonSensitiveIdentifiers> {
+    return this.request(`/api/v1/people/${personId}/sensitive`, { method: "PUT", body: JSON.stringify(body) });
+  }
+
   employments(params: Record<string, string> = {}): Promise<Employment[]> {
     return this.get("/api/v1/employments", params);
   }
@@ -244,6 +259,29 @@ class ApiClient {
 
   createWorkSchedule(body: Record<string, unknown>): Promise<WorkSchedule> {
     return this.request("/api/v1/work-schedules", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  assignWorkSchedule(employmentId: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/employments/${employmentId}/schedule-assignments`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  scheduleAssignments(employmentId: string): Promise<ScheduleAssignment[]> {
+    return this.request(`/api/v1/employments/${employmentId}/schedule-assignments`);
+  }
+
+  holidays(companyId: string, year: number): Promise<Holiday[]> {
+    return this.get("/api/v1/holidays", { company_id: companyId, year: String(year) });
+  }
+
+  createHoliday(body: Record<string, unknown>): Promise<Holiday> {
+    return this.request("/api/v1/holidays", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  generateHolidays(companyId: string, year: number): Promise<{ year: number; created: number; existing: number }> {
+    return this.request(`/api/v1/companies/${companyId}/holidays/generate?year=${year}`, { method: "POST" });
   }
 
   enrollmentRequests(): Promise<EnrollmentRequest[]> {

@@ -3,6 +3,7 @@
 import {
   ChevronsLeft,
   ChevronsRight,
+  CalendarDays,
   Clock,
   Building2,
   Fingerprint,
@@ -53,6 +54,7 @@ const NAV: NavSection[] = [
       { href: "/companies", label: "Empresas y sitios", icon: <Building2 className="h-[18px] w-[18px]" aria-hidden />, perm: "companies.read" },
       { href: "/people", label: "Personas", icon: <Users className="h-[18px] w-[18px]" aria-hidden />, perm: "people.read" },
       { href: "/work-schedules", label: "Horarios", icon: <Clock className="h-[18px] w-[18px]" aria-hidden />, perm: "schedules.read" },
+      { href: "/holidays", label: "Feriados", icon: <CalendarDays className="h-[18px] w-[18px]" aria-hidden />, perm: "schedules.read" },
     ],
   },
   {
@@ -85,6 +87,7 @@ const CRUMB_TITLES: Record<string, string> = {
   companies: "Empresas y sitios",
   people: "Personas",
   "work-schedules": "Horarios",
+  holidays: "Feriados",
   enrollments: "Enrolamientos",
   users: "Usuarios",
   audit: "Auditoría",

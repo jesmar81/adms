@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     zkteco_command_ttl_s: int = Field(default=86400)
     zkteco_command_max_attempts: int = Field(default=10)
 
+    # Dedicated symmetric key for Mexican HR identifiers (CURP/RFC/NSS).
+    # Required only by the sensitive-identifier endpoints; keep it in the
+    # deployment secret manager, never in the database or repository.
+    hr_pii_encryption_key: str = Field(default="")
+
     # --- Proxy trust (comma-separated IPs/CIDRs allowed to set X-Forwarded-For) ---
     trusted_proxies_raw: str = Field(default="")
 

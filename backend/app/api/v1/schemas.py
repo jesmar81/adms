@@ -91,6 +91,21 @@ class PersonIn(BaseModel):
     preferred_name: str | None = Field(default=None, max_length=150)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
+    birth_date: date | None = None
+    sex: str | None = Field(default=None, max_length=32)
+    marital_status: str | None = Field(default=None, max_length=32)
+    nationality: str | None = Field(default=None, max_length=80)
+    birth_state: str | None = Field(default=None, max_length=100)
+    address_street: str | None = Field(default=None, max_length=150)
+    address_ext_number: str | None = Field(default=None, max_length=20)
+    address_int_number: str | None = Field(default=None, max_length=20)
+    address_neighborhood: str | None = Field(default=None, max_length=100)
+    address_municipality: str | None = Field(default=None, max_length=100)
+    address_state: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=10)
+    emergency_contact_name: str | None = Field(default=None, max_length=150)
+    emergency_contact_phone: str | None = Field(default=None, max_length=32)
+    emergency_contact_relationship: str | None = Field(default=None, max_length=80)
 
 
 class PersonOut(PersonIn):
@@ -98,6 +113,43 @@ class PersonOut(PersonIn):
     active: bool
 
     model_config = {"from_attributes": True}
+
+
+class PersonPatch(BaseModel):
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    second_last_name: str | None = Field(default=None, max_length=100)
+    preferred_name: str | None = Field(default=None, max_length=150)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=32)
+    birth_date: date | None = None
+    sex: str | None = Field(default=None, max_length=32)
+    marital_status: str | None = Field(default=None, max_length=32)
+    nationality: str | None = Field(default=None, max_length=80)
+    birth_state: str | None = Field(default=None, max_length=100)
+    address_street: str | None = Field(default=None, max_length=150)
+    address_ext_number: str | None = Field(default=None, max_length=20)
+    address_int_number: str | None = Field(default=None, max_length=20)
+    address_neighborhood: str | None = Field(default=None, max_length=100)
+    address_municipality: str | None = Field(default=None, max_length=100)
+    address_state: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=10)
+    emergency_contact_name: str | None = Field(default=None, max_length=150)
+    emergency_contact_phone: str | None = Field(default=None, max_length=32)
+    emergency_contact_relationship: str | None = Field(default=None, max_length=80)
+    active: bool | None = None
+
+
+class PersonSensitiveIdentifiersIn(BaseModel):
+    curp: str | None = Field(default=None, min_length=18, max_length=18)
+    rfc: str | None = Field(default=None, min_length=12, max_length=13)
+    nss: str | None = Field(default=None, min_length=11, max_length=11)
+
+
+class PersonSensitiveIdentifiersOut(BaseModel):
+    curp: str | None = None
+    rfc: str | None = None
+    nss: str | None = None
 
 
 class EmploymentIn(BaseModel):
@@ -153,6 +205,33 @@ class WorkScheduleOut(BaseModel):
     version: int
     active: bool
     slots: list[ScheduleSlotOut] = Field(default_factory=list)
+
+
+class HolidayIn(BaseModel):
+    company_id: uuid.UUID
+    holiday_date: date
+    name: str = Field(min_length=1, max_length=200)
+    kind: str = Field(default="company", pattern="^(company|electoral)$")
+    is_paid_rest: bool = True
+
+
+class HolidayOut(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    holiday_date: date
+    name: str
+    kind: str
+    source: str | None
+    is_paid_rest: bool
+    generated: bool
+
+    model_config = {"from_attributes": True}
+
+
+class HolidayGenerationOut(BaseModel):
+    year: int
+    created: int
+    existing: int
 
 
 class ScheduleAssignmentIn(BaseModel):
