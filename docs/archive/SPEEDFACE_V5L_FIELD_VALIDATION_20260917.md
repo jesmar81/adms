@@ -1,4 +1,8 @@
-# Validación completa del SpeedFace‑V5L remoto (Windows)
+# Historial: validación completa del SpeedFace‑V5L remoto (Windows)
+
+> Archivado el 2026-09-17. Esta validación ya se completó y su script fue
+> desactivado para evitar duplicar checadas e `INFO`. Para evidencia activa usa
+> [`SPEEDFACE_V5L_REMAINING_CAPTURE.md`](../SPEEDFACE_V5L_REMAINING_CAPTURE.md).
 
 Este procedimiento crea evidencia real para completar la integración sin
 adivinar comandos ni transportar biometría. Se ejecuta **en el servidor Windows

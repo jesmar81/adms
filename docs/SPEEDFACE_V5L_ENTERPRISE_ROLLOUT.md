@@ -2,13 +2,14 @@
 
 ## Estado basado en evidencia
 
-La captura real del 15 de septiembre confirma el perfil **A&C PUSH / Security
-PUSH** y estas operaciones:
+Las capturas reales del 15 y 17 de septiembre confirman el perfil **A&C PUSH /
+Security PUSH** y estas operaciones:
 
 - `GET /iclock/getrequest` (sondeo del reloj);
 - `POST /iclock/cdata?table=rtstate`;
 - `POST /iclock/cdata?table=rtlog` con PIN, hora, estado y método de
-  verificación.
+  verificación;
+- entrega del comando de sólo lectura `INFO` mediante `getrequest`.
 
 No confirma todavía `querydata`, el formato de consulta de usuarios, ni el
 significado de `Return=-5000`. Por ello el sistema recibe y audita
@@ -36,18 +37,17 @@ que el equipo aplicó el cambio no es una integración apta para producción.
 
 ## Siguiente captura controlada
 
-En una ventana de mantenimiento, con sólo un operador y sin editar usuarios
-productivos, sigue el asistente de [validación de campo](SPEEDFACE_V5L_FIELD_VALIDATION.md).
-El procedimiento resumido es:
+La validación integral anterior ya está cerrada. En una ventana de
+mantenimiento, con sólo un operador y sin editar usuarios productivos, sigue
+la [captura pendiente de usuarios](SPEEDFACE_V5L_REMAINING_CAPTURE.md). El
+procedimiento resumido es:
 
-1. Capturar diez minutos con `scripts/capture_adms_session.ps1` en el servidor
+1. Capturar con `scripts/capture_speedface_v5l_remaining.ps1` en el servidor
    que recibe al reloj.
-2. Desde el panel, emitir únicamente una consulta inocua (`INFO` o un GET de
-   opción), esperar la siguiente llamada `getrequest` y guardar la respuesta
-   completa del reloj, especialmente `devicecmd` y el valor `Return`.
-3. Usar la función de consulta de usuarios del propio menú del equipo, si la
-   tiene, sin dar de alta ni borrar nada. Se debe capturar cualquier llamada a
-   `querydata`, incluidos `type`, `table`, `cmdid`, cuerpo y acuse HTTP.
+2. Desde el sistema autorizado que administra el V5L, hacer sólo una lectura
+   de inventario de usuarios; no una escritura ni un comando inferido.
+3. Conservar la petición, respuesta, paginación/finalización y acuse HTTP
+   completos, cualquiera que sea su endpoint (`querydata` no se presupone).
 4. Decodificar el PCAP localmente. El PCAP y las transcripciones contienen
    datos personales: se conservan fuera de Git.
 

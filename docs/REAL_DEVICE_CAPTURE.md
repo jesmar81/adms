@@ -17,9 +17,9 @@ datos del reloj.
 
 ## Windows (recomendado para el servidor remoto)
 
-Para una validación integral del SpeedFace-V5L (checadas, sondeo,
-`devicecmd` y posible `querydata`) usa primero el asistente
-[`SPEEDFACE_V5L_FIELD_VALIDATION.md`](SPEEDFACE_V5L_FIELD_VALIDATION.md).
+La captura de checadas, sondeo y `INFO` del SpeedFace-V5L ya fue concluida.
+Para la única evidencia que falta —lectura de usuarios— usa el asistente
+[`SPEEDFACE_V5L_REMAINING_CAPTURE.md`](SPEEDFACE_V5L_REMAINING_CAPTURE.md).
 Genera el PCAP, una línea de tiempo operativa y un resumen automáticamente.
 Los comandos de esta sección siguen disponibles para una captura manual.
 

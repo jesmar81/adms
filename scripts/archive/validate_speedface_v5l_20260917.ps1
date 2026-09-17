@@ -32,6 +32,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+throw 'ARCHIVED: la validación de checadas e INFO ya concluyó el 2026-09-17. Usa scripts/capture_speedface_v5l_remaining.ps1.'
+
 function Find-WiresharkCommand([string]$Name) {
     $command = Get-Command $Name -ErrorAction SilentlyContinue
     if ($null -ne $command) { return $command.Path }
