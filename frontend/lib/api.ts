@@ -10,6 +10,7 @@ import type {
   DeviceEvent,
   DeviceUser,
   Employment,
+  EmploymentCompensation,
   EnrollmentRequest,
   Holiday,
   Me,
@@ -253,12 +254,34 @@ class ApiClient {
     });
   }
 
+  employmentCompensation(employmentId: string): Promise<EmploymentCompensation> {
+    return this.request(`/api/v1/employments/${employmentId}/compensation`);
+  }
+
+  updateEmploymentCompensation(
+    employmentId: string,
+    body: Record<string, unknown>,
+  ): Promise<EmploymentCompensation> {
+    return this.request(`/api/v1/employments/${employmentId}/compensation`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
+
   workSchedules(companyId?: string): Promise<WorkSchedule[]> {
     return this.get("/api/v1/work-schedules", companyId ? { company_id: companyId } : {});
   }
 
   createWorkSchedule(body: Record<string, unknown>): Promise<WorkSchedule> {
     return this.request("/api/v1/work-schedules", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  updateWorkSchedule(id: string, body: Record<string, unknown>): Promise<WorkSchedule> {
+    return this.request(`/api/v1/work-schedules/${id}`, { method: "PUT", body: JSON.stringify(body) });
+  }
+
+  deleteWorkSchedule(id: string): Promise<void> {
+    return this.request(`/api/v1/work-schedules/${id}`, { method: "DELETE" });
   }
 
   assignWorkSchedule(employmentId: string, body: Record<string, unknown>): Promise<unknown> {

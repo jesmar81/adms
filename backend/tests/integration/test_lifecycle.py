@@ -181,6 +181,26 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-01"},
     )
     assert assignment.status_code == 201
+    compensation = await life_client.put(
+        f"/api/v1/employments/{employment['id']}/compensation",
+        json={
+            "daily_salary": "500.00",
+            "integrated_daily_salary": "540.25",
+            "pay_frequency": "quincenal",
+            "bank_clabe": "123456789012345678",
+            "imss_umf": "12",
+        },
+    )
+    assert compensation.json()["bank_clabe"] == "123456789012345678"
+    revised = await life_client.put(
+        f"/api/v1/work-schedules/{schedule['id']}",
+        json={"name": "L-V actualizado", "slots": slots},
+    )
+    assert revised.status_code == 200
+    assert revised.json()["id"] != schedule["id"]
+    assert (await life_client.delete(f"/api/v1/work-schedules/{schedule['id']}")).status_code == 409
+    revised_id = revised.json()["id"]
+    assert (await life_client.delete(f"/api/v1/work-schedules/{revised_id}")).status_code == 204
     holiday_path = f"/api/v1/companies/{company['id']}/holidays/generate?year=2026"
     generated = await life_client.post(holiday_path)
     assert generated.json() == {"year": 2026, "created": 7, "existing": 0}

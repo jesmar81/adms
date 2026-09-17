@@ -1,10 +1,11 @@
 "use client";
 
-import { CalendarClock, Plus } from "lucide-react";
+import { CalendarClock, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { DataTable } from "@/components/ui/table";
@@ -19,13 +20,6 @@ function restDays(schedule: WorkSchedule): string {
   const worked = new Set(schedule.slots.map((slot) => slot.day_of_week));
   return DAY_NAMES.filter((_, day) => !worked.has(day)).join(", ") || "Sin descanso definido";
 }
-
-const COLUMNS: Column<WorkSchedule>[] = [
-  { key: "name", header: "Horario", render: (row) => <span className="font-medium">{row.name}</span> },
-  { key: "rest", header: "Descanso semanal", render: restDays },
-  { key: "slots", header: "Marcas esperadas", render: (row) => `${row.slots.length} definición(es)` },
-  { key: "timezone", header: "Zona horaria", render: (row) => <span className="text-zinc-500">{row.timezone}</span> },
-];
 
 export default function WorkSchedulesPage() {
   const { notify } = useToast();
@@ -42,6 +36,8 @@ export default function WorkSchedulesPage() {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<WorkSchedule | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<WorkSchedule | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,9 +69,8 @@ export default function WorkSchedulesPage() {
     });
   }
 
-  async function create() {
-    if (!companyId || !name.trim() || saving || daysOff.length < 1 || daysOff.length > 2) return;
-    const slots = DAY_NAMES.flatMap((_, day) => {
+  function slotsPayload() {
+    return DAY_NAMES.flatMap((_, day) => {
       if (daysOff.includes(day)) return [];
       return [
         { day_of_week: day, kind: "entry", sequence: 1, expected_at: entry, tolerance_minutes: 0, required: true },
@@ -86,11 +81,41 @@ export default function WorkSchedulesPage() {
         { day_of_week: day, kind: "exit", sequence: 1, expected_at: exit, tolerance_minutes: 0, required: true },
       ];
     });
+  }
+
+  function startEdit(schedule: WorkSchedule) {
+    const worked = new Set(schedule.slots.map((slot) => slot.day_of_week));
+    const sample = (kind: string, fallback: string) => schedule.slots.find((slot) => slot.kind === kind)?.expected_at.slice(0, 5) ?? fallback;
+    setEditing(schedule);
+    setName(schedule.name);
+    setEntry(sample("entry", "09:00"));
+    setMealOut(sample("meal_out", "14:00"));
+    setMealIn(sample("meal_in", "15:00"));
+    setExit(sample("exit", "18:00"));
+    setIncludeMeal(schedule.slots.some((slot) => slot.kind === "meal_out"));
+    setDaysOff(DAY_NAMES.map((_, day) => day).filter((day) => !worked.has(day)));
+  }
+
+  function resetForm() {
+    setEditing(null);
+    setName("");
+    setDaysOff([5, 6]);
+    setIncludeMeal(true);
+  }
+
+  async function save() {
+    if (!companyId || !name.trim() || saving || daysOff.length < 1 || daysOff.length > 2) return;
+    const payload = { name: name.trim(), timezone: "America/Mexico_City", slots: slotsPayload() };
     setSaving(true);
     try {
-      await api.createWorkSchedule({ company_id: companyId, name: name.trim(), timezone: "America/Mexico_City", slots });
-      setName("");
-      notify("Horario creado", { message: "Ya puede asignarse al empleo específico de cada persona.", tone: "success" });
+      if (editing) {
+        const updated = await api.updateWorkSchedule(editing.id, payload);
+        notify("Horario actualizado", { message: updated.id === editing.id ? "Se actualizó el horario." : "Se creó una nueva versión para proteger el historial.", tone: "success" });
+      } else {
+        await api.createWorkSchedule({ company_id: companyId, ...payload });
+        notify("Horario creado", { message: "Ya puede asignarse al empleo específico de cada persona.", tone: "success" });
+      }
+      resetForm();
       await load();
     } catch (err) {
       setError(err);
@@ -99,9 +124,32 @@ export default function WorkSchedulesPage() {
     }
   }
 
+  async function remove() {
+    if (!pendingDelete || saving) return;
+    setSaving(true);
+    try {
+      await api.deleteWorkSchedule(pendingDelete.id);
+      notify("Horario eliminado", { tone: "success" });
+      setPendingDelete(null);
+      await load();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const columns: Column<WorkSchedule>[] = [
+    { key: "name", header: "Horario", render: (row) => <span className="font-medium">{row.name}</span> },
+    { key: "rest", header: "Descanso semanal", render: restDays },
+    { key: "slots", header: "Marcas esperadas", render: (row) => `${row.slots.length} definición(es)` },
+    { key: "timezone", header: "Zona horaria", render: (row) => <span className="text-zinc-500">{row.timezone}</span> },
+    { key: "actions", header: "", render: (row) => <span className="flex justify-end gap-1"><Button size="sm" variant="ghost" icon={<Pencil className="h-4 w-4" />} className="w-8 !px-0" aria-label="Editar horario" title="Editar horario" onClick={() => startEdit(row)} /><Button size="sm" variant="ghost" icon={<Trash2 className="h-4 w-4" />} className="w-8 !px-0 text-red-600" aria-label="Eliminar horario" title="Eliminar horario" onClick={() => setPendingDelete(row)} /></span> },
+  ];
+
   return (
     <>
-      <PageHeader title="Horarios" description="Cada horario define jornada, comida y uno o dos descansos no necesariamente consecutivos." crumbs={[{ label: "Horarios" }]} />
+      <PageHeader title="Horarios" description="Cada horario define jornada, comida y uno o dos descansos no necesariamente consecutivos." crumbs={[{ label: "Horarios" }]} actions={editing ? <Button variant="ghost" icon={<X className="h-4 w-4" />} className="w-10 !px-0" aria-label="Cancelar edición" title="Cancelar edición" onClick={resetForm} /> : undefined} />
       {error ? <div className="mb-4"><ErrorState error={error} onRetry={() => void load()} /></div> : null}
       <Card className="mb-5 p-5">
         <div className="flex flex-col gap-4">
@@ -124,11 +172,12 @@ export default function WorkSchedulesPage() {
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" checked={includeMeal} onChange={(event) => setIncludeMeal(event.target.checked)} className="h-4 w-4 rounded border-line-soft text-accent-600 focus:ring-accent-500" />Incluir salida y regreso de comida</label>
-            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void create()} loading={saving} disabled={!companyId || !name.trim() || daysOff.length < 1}>Crear horario</Button>
+            <Button variant="primary" icon={editing ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />} className="w-10 !px-0" aria-label={editing ? "Guardar horario" : "Crear horario"} title={editing ? "Guardar horario" : "Crear horario"} onClick={() => void save()} loading={saving} disabled={!companyId || !name.trim() || daysOff.length < 1} />
           </div>
         </div>
       </Card>
-      {loading ? <LoadingState rows={5} /> : <DataTable ariaLabel="Horarios" columns={COLUMNS} data={schedules} keyOf={(row) => row.id} renderCard={(row) => <div><p className="font-medium">{row.name}</p><p className="mt-1 text-xs text-zinc-500">Descanso: {restDays(row)} · {row.slots.length} marcas</p></div>} empty={<EmptyState icon={<CalendarClock className="h-5 w-5" />} title="Sin horarios" description="Crea un horario para poder asignarlo a los empleos de esta empresa." />} />}
+      {loading ? <LoadingState rows={5} /> : <DataTable ariaLabel="Horarios" columns={columns} data={schedules} keyOf={(row) => row.id} renderCard={(row) => <div className="flex items-start justify-between gap-3"><div><p className="font-medium">{row.name}</p><p className="mt-1 text-xs text-zinc-500">Descanso: {restDays(row)} · {row.slots.length} marcas</p></div><span className="flex gap-1"><Button size="sm" variant="ghost" icon={<Pencil className="h-4 w-4" />} className="w-8 !px-0" aria-label="Editar horario" title="Editar horario" onClick={() => startEdit(row)} /><Button size="sm" variant="ghost" icon={<Trash2 className="h-4 w-4" />} className="w-8 !px-0 text-red-600" aria-label="Eliminar horario" title="Eliminar horario" onClick={() => setPendingDelete(row)} /></span></div>} empty={<EmptyState icon={<CalendarClock className="h-5 w-5" />} title="Sin horarios" description="Crea un horario para poder asignarlo a los empleos de esta empresa." />} />}
+      <Modal open={pendingDelete !== null} onClose={() => setPendingDelete(null)} title="Eliminar horario" description="Esta acción no se puede deshacer." footer={<><Button variant="ghost" icon={<X className="h-4 w-4" />} className="w-10 !px-0" aria-label="Cancelar" title="Cancelar" onClick={() => setPendingDelete(null)} /><Button variant="danger" icon={<Trash2 className="h-4 w-4" />} className="w-10 !px-0" aria-label="Confirmar eliminación" title="Confirmar eliminación" onClick={() => void remove()} loading={saving} /></>}><p>Se eliminará <span className="font-medium">{pendingDelete?.name}</span>. Si tiene historial de asignaciones, el sistema la conservará para no alterar la auditoría.</p></Modal>
     </>
   );
 }

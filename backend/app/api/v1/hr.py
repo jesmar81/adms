@@ -9,7 +9,7 @@ from json import JSONDecodeError, dumps, loads
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import deps
@@ -19,6 +19,8 @@ from app.api.v1.schemas import (
     CompanyOut,
     CorporateGroupIn,
     CorporateGroupOut,
+    EmploymentCompensationIn,
+    EmploymentCompensationOut,
     EmploymentIn,
     EmploymentOut,
     EnrollmentRequestIn,
@@ -35,11 +37,13 @@ from app.api.v1.schemas import (
     PersonSensitiveIdentifiersOut,
     ScheduleAssignmentIn,
     ScheduleAssignmentOut,
+    ScheduleSlotIn,
     ScheduleSlotOut,
     SiteIn,
     SiteOut,
     WorkScheduleIn,
     WorkScheduleOut,
+    WorkSchedulePatch,
 )
 from app.core.database import get_db
 from app.models.device import AttendanceLog, Device, DeviceUser
@@ -47,6 +51,7 @@ from app.models.hr import (
     Company,
     CorporateGroup,
     Employment,
+    EmploymentCompensation,
     EnrollmentRequest,
     Holiday,
     Person,
@@ -299,6 +304,15 @@ async def get_person_sensitive_identifiers(
             curp=decrypt_identifier(row.curp_encrypted) if row.curp_encrypted else None,
             rfc=decrypt_identifier(row.rfc_encrypted) if row.rfc_encrypted else None,
             nss=decrypt_identifier(row.nss_encrypted) if row.nss_encrypted else None,
+            fiscal_name=decrypt_identifier(row.fiscal_name_encrypted)
+            if row.fiscal_name_encrypted
+            else None,
+            tax_regime=decrypt_identifier(row.tax_regime_encrypted)
+            if row.tax_regime_encrypted
+            else None,
+            fiscal_postal_code=decrypt_identifier(row.fiscal_postal_code_encrypted)
+            if row.fiscal_postal_code_encrypted
+            else None,
         )
     except PiiEncryptionUnavailableError as exc:
         raise _pii_unavailable(exc) from exc
@@ -336,6 +350,13 @@ async def update_person_sensitive_identifiers(
                 encrypted, digest = encrypt_identifier(value)
                 setattr(row, encrypted_field, encrypted)
                 setattr(row, hash_field, digest)
+        for field in ("fiscal_name", "tax_regime", "fiscal_postal_code"):
+            if field not in payload.model_fields_set:
+                continue
+            value = getattr(payload, field)
+            encrypted_field = f"{field}_encrypted"
+            encrypted_value = encrypt_identifier(value)[0] if value is not None else None
+            setattr(row, encrypted_field, encrypted_value)
         await session.flush()
         await _audit(session, user, "person.sensitive_identifiers.update", "person", person_id, rid)
         await session.commit()
@@ -343,6 +364,15 @@ async def update_person_sensitive_identifiers(
             curp=decrypt_identifier(row.curp_encrypted) if row.curp_encrypted else None,
             rfc=decrypt_identifier(row.rfc_encrypted) if row.rfc_encrypted else None,
             nss=decrypt_identifier(row.nss_encrypted) if row.nss_encrypted else None,
+            fiscal_name=decrypt_identifier(row.fiscal_name_encrypted)
+            if row.fiscal_name_encrypted
+            else None,
+            tax_regime=decrypt_identifier(row.tax_regime_encrypted)
+            if row.tax_regime_encrypted
+            else None,
+            fiscal_postal_code=decrypt_identifier(row.fiscal_postal_code_encrypted)
+            if row.fiscal_postal_code_encrypted
+            else None,
         )
     except PiiEncryptionUnavailableError as exc:
         raise _pii_unavailable(exc) from exc
@@ -443,14 +473,92 @@ async def create_employment(
         raise HTTPException(status_code=404, detail="Person or company not found")
     if person.corporate_group_id != company.corporate_group_id:
         raise HTTPException(status_code=422, detail="Person and company belong to different groups")
+    if payload.site_id is not None:
+        site = await session.get(Site, payload.site_id)
+        if site is None or site.company_id != company.id:
+            raise HTTPException(status_code=422, detail="Site belongs to another company")
     if payload.ended_on is not None and payload.ended_on < payload.started_on:
         raise HTTPException(status_code=422, detail="ended_on must not precede started_on")
+    if payload.probation_ends_on is not None and payload.probation_ends_on < payload.started_on:
+        raise HTTPException(status_code=422, detail="probation_ends_on must not precede started_on")
     row = Employment(person_id=person_id, **payload.model_dump())
     session.add(row)
     await session.flush()
     await _audit(session, user, "employment.create", "employment", row.id, rid)
     await session.commit()
     return row
+
+
+def _compensation_out(row: EmploymentCompensation) -> EmploymentCompensationOut:
+    try:
+        return EmploymentCompensationOut(
+            employment_id=row.employment_id,
+            daily_salary=row.daily_salary,
+            integrated_daily_salary=row.integrated_daily_salary,
+            pay_frequency=row.pay_frequency,
+            payment_method=row.payment_method,
+            bank_clabe=decrypt_identifier(row.bank_clabe_encrypted)
+            if row.bank_clabe_encrypted
+            else None,
+            imss_umf=row.imss_umf,
+            imss_worker_type=row.imss_worker_type,
+            imss_salary_type=row.imss_salary_type,
+            imss_workday_type=row.imss_workday_type,
+        )
+    except PiiEncryptionUnavailableError as exc:
+        raise _pii_unavailable(exc) from exc
+
+
+@employments_router.get("/{employment_id}/compensation", response_model=EmploymentCompensationOut)
+async def get_employment_compensation(
+    employment_id: uuid.UUID,
+    _user: User = Depends(deps.require_permission("payroll.read")),
+    session: AsyncSession = Depends(get_db),
+) -> EmploymentCompensationOut:
+    if await session.get(Employment, employment_id) is None:
+        raise HTTPException(status_code=404, detail="Employment not found")
+    row = await session.scalar(
+        select(EmploymentCompensation).where(EmploymentCompensation.employment_id == employment_id)
+    )
+    if row is None:
+        return EmploymentCompensationOut(employment_id=employment_id)
+    return _compensation_out(row)
+
+
+@employments_router.put("/{employment_id}/compensation", response_model=EmploymentCompensationOut)
+async def update_employment_compensation(
+    employment_id: uuid.UUID,
+    payload: EmploymentCompensationIn,
+    user: User = Depends(deps.require_permission("payroll.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> EmploymentCompensationOut:
+    if await session.get(Employment, employment_id) is None:
+        raise HTTPException(status_code=404, detail="Employment not found")
+    try:
+        row = await session.scalar(
+            select(EmploymentCompensation).where(
+                EmploymentCompensation.employment_id == employment_id
+            )
+        )
+        if row is None:
+            row = EmploymentCompensation(employment_id=employment_id)
+            session.add(row)
+        values = payload.model_dump(exclude={"bank_clabe"})
+        for key, value in values.items():
+            setattr(row, key, value)
+        if "bank_clabe" in payload.model_fields_set:
+            row.bank_clabe_encrypted = (
+                encrypt_identifier(payload.bank_clabe)[0] if payload.bank_clabe else None
+            )
+        await session.flush()
+        await _audit(
+            session, user, "employment.compensation.update", "employment", employment_id, rid
+        )
+        await session.commit()
+        return _compensation_out(row)
+    except PiiEncryptionUnavailableError as exc:
+        raise _pii_unavailable(exc) from exc
 
 
 schedules_router = APIRouter(prefix="/work-schedules", tags=["work-schedules"])
@@ -597,6 +705,102 @@ async def create_work_schedule(
     await _audit(session, user, "work_schedule.create", "work_schedule", row.id, rid)
     await session.commit()
     return _schedule_out(row, slots)
+
+
+def _validate_schedule_slots(slots: list[ScheduleSlotIn]) -> None:
+    positions = {(slot.day_of_week, slot.kind, slot.sequence) for slot in slots}
+    if len(positions) != len(slots):
+        raise HTTPException(status_code=422, detail="Duplicate schedule slot position")
+    worked_days = {slot.day_of_week for slot in slots}
+    if 7 - len(worked_days) not in (1, 2):
+        raise HTTPException(
+            status_code=422, detail="A schedule must define one or two weekly days off"
+        )
+    for day in worked_days:
+        kinds = {slot.kind for slot in slots if slot.day_of_week == day}
+        if not {"entry", "exit"}.issubset(kinds):
+            raise HTTPException(
+                status_code=422, detail="Each working day requires entry and exit slots"
+            )
+
+
+@schedules_router.put("/{schedule_id}", response_model=WorkScheduleOut)
+async def update_work_schedule(
+    schedule_id: uuid.UUID,
+    payload: WorkSchedulePatch,
+    user: User = Depends(deps.require_permission("schedules.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> WorkScheduleOut:
+    _validate_timezone(payload.timezone)
+    _validate_schedule_slots(payload.slots)
+    row = await session.get(WorkSchedule, schedule_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Work schedule not found")
+    assigned = await session.scalar(
+        select(ScheduleAssignment.id)
+        .where(ScheduleAssignment.work_schedule_id == schedule_id)
+        .limit(1)
+    )
+    if assigned is not None:
+        latest_version = await session.scalar(
+            select(WorkSchedule.version)
+            .where(WorkSchedule.company_id == row.company_id, WorkSchedule.name == payload.name)
+            .order_by(WorkSchedule.version.desc())
+            .limit(1)
+        )
+        row.active = False
+        replacement = WorkSchedule(
+            company_id=row.company_id,
+            name=payload.name,
+            timezone=payload.timezone,
+            version=(latest_version or 0) + 1,
+        )
+        session.add(replacement)
+        await session.flush()
+        slots = [
+            ScheduleSlot(work_schedule_id=replacement.id, **slot.model_dump())
+            for slot in payload.slots
+        ]
+        session.add_all(slots)
+        await session.flush()
+        await _audit(session, user, "work_schedule.version", "work_schedule", replacement.id, rid)
+        await session.commit()
+        return _schedule_out(replacement, slots)
+    row.name = payload.name
+    row.timezone = payload.timezone
+    await session.execute(delete(ScheduleSlot).where(ScheduleSlot.work_schedule_id == row.id))
+    slots = [ScheduleSlot(work_schedule_id=row.id, **slot.model_dump()) for slot in payload.slots]
+    session.add_all(slots)
+    await session.flush()
+    await _audit(session, user, "work_schedule.update", "work_schedule", row.id, rid)
+    await session.commit()
+    return _schedule_out(row, slots)
+
+
+@schedules_router.delete("/{schedule_id}", status_code=204)
+async def delete_work_schedule(
+    schedule_id: uuid.UUID,
+    user: User = Depends(deps.require_permission("schedules.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> None:
+    row = await session.get(WorkSchedule, schedule_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Work schedule not found")
+    if await session.scalar(
+        select(ScheduleAssignment.id)
+        .where(ScheduleAssignment.work_schedule_id == schedule_id)
+        .limit(1)
+    ) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A schedule with assignment history cannot be deleted; edit creates a version",
+        )
+    await session.delete(row)
+    await session.flush()
+    await _audit(session, user, "work_schedule.delete", "work_schedule", schedule_id, rid)
+    await session.commit()
 
 
 @employments_router.post(

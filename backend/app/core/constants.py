@@ -93,6 +93,8 @@ PERMISSIONS = (
     "people.write",
     "employments.read",
     "employments.write",
+    "payroll.read",
+    "payroll.write",
     "schedules.read",
     "schedules.write",
     "enrollments.read",

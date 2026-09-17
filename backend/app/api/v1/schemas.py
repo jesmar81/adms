@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -144,24 +145,35 @@ class PersonSensitiveIdentifiersIn(BaseModel):
     curp: str | None = Field(default=None, min_length=18, max_length=18)
     rfc: str | None = Field(default=None, min_length=12, max_length=13)
     nss: str | None = Field(default=None, min_length=11, max_length=11)
+    fiscal_name: str | None = Field(default=None, max_length=255)
+    tax_regime: str | None = Field(default=None, max_length=16)
+    fiscal_postal_code: str | None = Field(default=None, min_length=5, max_length=5)
 
 
 class PersonSensitiveIdentifiersOut(BaseModel):
     curp: str | None = None
     rfc: str | None = None
     nss: str | None = None
+    fiscal_name: str | None = None
+    tax_regime: str | None = None
+    fiscal_postal_code: str | None = None
 
 
 class EmploymentIn(BaseModel):
     company_id: uuid.UUID
+    site_id: uuid.UUID | None = None
     employee_number: str = Field(min_length=1, max_length=64)
     position: str | None = Field(default=None, max_length=150)
     department: str | None = Field(default=None, max_length=150)
     cost_center: str | None = Field(default=None, max_length=100)
     manager_person_id: uuid.UUID | None = None
     contract_type: str | None = Field(default=None, max_length=80)
+    employment_relation_type: str | None = Field(default=None, max_length=80)
+    job_category: str | None = Field(default=None, max_length=100)
+    work_location: str | None = Field(default=None, max_length=150)
     started_on: date
     ended_on: date | None = None
+    probation_ends_on: date | None = None
 
 
 class EmploymentOut(EmploymentIn):
@@ -170,6 +182,24 @@ class EmploymentOut(EmploymentIn):
     active: bool
 
     model_config = {"from_attributes": True}
+
+
+class EmploymentCompensationIn(BaseModel):
+    daily_salary: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    integrated_daily_salary: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
+    pay_frequency: str | None = Field(default=None, max_length=32)
+    payment_method: str | None = Field(default=None, max_length=32)
+    bank_clabe: str | None = Field(default=None, min_length=18, max_length=18)
+    imss_umf: str | None = Field(default=None, max_length=16)
+    imss_worker_type: str | None = Field(default=None, max_length=16)
+    imss_salary_type: str | None = Field(default=None, max_length=16)
+    imss_workday_type: str | None = Field(default=None, max_length=16)
+
+
+class EmploymentCompensationOut(EmploymentCompensationIn):
+    employment_id: uuid.UUID
 
 
 class ScheduleSlotIn(BaseModel):
@@ -188,6 +218,12 @@ class WorkScheduleIn(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     timezone: str = Field(default="America/Mexico_City", max_length=64)
     slots: list[ScheduleSlotIn] = Field(default_factory=list, max_length=100)
+
+
+class WorkSchedulePatch(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    timezone: str = Field(default="America/Mexico_City", max_length=64)
+    slots: list[ScheduleSlotIn] = Field(min_length=1, max_length=100)
 
 
 class ScheduleSlotOut(ScheduleSlotIn):

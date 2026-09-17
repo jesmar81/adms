@@ -117,21 +117,42 @@ export interface PersonSensitiveIdentifiers {
   curp: string | null;
   rfc: string | null;
   nss: string | null;
+  fiscal_name: string | null;
+  tax_regime: string | null;
+  fiscal_postal_code: string | null;
 }
 
 export interface Employment {
   id: string;
   person_id: string;
   company_id: string;
+  site_id: string | null;
   employee_number: string;
   position: string | null;
   department: string | null;
   cost_center: string | null;
   manager_person_id: string | null;
   contract_type: string | null;
+  employment_relation_type: string | null;
+  job_category: string | null;
+  work_location: string | null;
   started_on: string;
   ended_on: string | null;
+  probation_ends_on: string | null;
   active: boolean;
+}
+
+export interface EmploymentCompensation {
+  employment_id: string;
+  daily_salary: string | null;
+  integrated_daily_salary: string | null;
+  pay_frequency: string | null;
+  payment_method: string | null;
+  bank_clabe: string | null;
+  imss_umf: string | null;
+  imss_worker_type: string | null;
+  imss_salary_type: string | null;
+  imss_workday_type: string | null;
 }
 
 export interface ScheduleSlot {

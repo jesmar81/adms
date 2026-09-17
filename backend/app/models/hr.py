@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, time
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -18,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     Time,
@@ -123,6 +125,9 @@ class PersonSensitiveIdentifier(Base, UUIDPKMixin, TimestampMixin):
     curp_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     rfc_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     nss_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fiscal_name_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tax_regime_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fiscal_postal_code_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     curp_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     rfc_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     nss_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -144,6 +149,9 @@ class Employment(Base, UUIDPKMixin, TimestampMixin):
     company_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False
     )
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("sites.id", ondelete="SET NULL"), nullable=True
+    )
     employee_number: Mapped[str] = mapped_column(String(64), nullable=False)
     position: Mapped[str | None] = mapped_column(String(150), nullable=True)
     department: Mapped[str | None] = mapped_column(String(150), nullable=True)
@@ -152,14 +160,41 @@ class Employment(Base, UUIDPKMixin, TimestampMixin):
         GUID(), ForeignKey("people.id", ondelete="SET NULL"), nullable=True
     )
     contract_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    employment_relation_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    job_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    work_location: Mapped[str | None] = mapped_column(String(150), nullable=True)
     started_on: Mapped[date] = mapped_column(Date, nullable=False)
     ended_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    probation_ends_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("company_id", "employee_number", name="uq_employments_company_number"),
         Index("ix_employments_person", "person_id"),
         Index("ix_employments_company", "company_id"),
+    )
+
+
+class EmploymentCompensation(Base, UUIDPKMixin, TimestampMixin):
+    """Payroll and IMSS fields, restricted to the payroll permission scope."""
+
+    __tablename__ = "employment_compensations"
+
+    employment_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("employments.id", ondelete="CASCADE"), nullable=False
+    )
+    daily_salary: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    integrated_daily_salary: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    pay_frequency: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    bank_clabe_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    imss_umf: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    imss_worker_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    imss_salary_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    imss_workday_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("employment_id", name="uq_employment_compensations_employment"),
     )
 
 
