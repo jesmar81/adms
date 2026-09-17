@@ -37,7 +37,8 @@ que el equipo aplicó el cambio no es una integración apta para producción.
 ## Siguiente captura controlada
 
 En una ventana de mantenimiento, con sólo un operador y sin editar usuarios
-productivos:
+productivos, sigue el asistente de [validación de campo](SPEEDFACE_V5L_FIELD_VALIDATION.md).
+El procedimiento resumido es:
 
 1. Capturar diez minutos con `scripts/capture_adms_session.ps1` en el servidor
    que recibe al reloj.

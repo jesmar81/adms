@@ -17,6 +17,12 @@ datos del reloj.
 
 ## Windows (recomendado para el servidor remoto)
 
+Para una validación integral del SpeedFace-V5L (checadas, sondeo,
+`devicecmd` y posible `querydata`) usa primero el asistente
+[`SPEEDFACE_V5L_FIELD_VALIDATION.md`](SPEEDFACE_V5L_FIELD_VALIDATION.md).
+Genera el PCAP, una línea de tiempo operativa y un resumen automáticamente.
+Los comandos de esta sección siguen disponibles para una captura manual.
+
 Instala [Wireshark](https://www.wireshark.org/download.html) en el servidor que
 recibe al reloj e incluye **Npcap** durante el instalador. Wireshark provee
 `dumpcap.exe` para capturar y `tshark.exe` para leer PCAP; no hace falta Python
