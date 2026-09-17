@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.adms.parser import (
     parse_command_results,
     parse_device_info,
+    parse_info_command_response,
     parse_kv_pairs,
     parse_registry_body,
     parse_userinfo,
@@ -36,6 +37,16 @@ def test_registry_tilde_prefix() -> None:
 def test_device_info_newline_kv() -> None:
     info = parse_device_info("FWVersion=Ver 8.1.1\nDeviceName=TestDevice\nIPAddress=192.168.1.100")
     assert info["DeviceName"] == "TestDevice"
+
+
+def test_info_command_response_normalizes_real_v5l_inventory() -> None:
+    info = parse_info_command_response(
+        "ID=10&Return=0&CMD=INFO\n~DeviceName=SpeedFace-V5L\n"
+        "MAC=00:17:61:11:cf:40\nFWVersion=ZAM230-NF50VA-Ver1.1.9\n~Platform=ZAM230_TFT"
+    )
+    assert info["DeviceName"] == "SpeedFace-V5L"
+    assert info["MACAddress"] == "00:17:61:11:cf:40"
+    assert info["Platform"] == "ZAM230_TFT"
 
 
 def test_kv_ignores_lines_without_equals() -> None:

@@ -230,7 +230,24 @@ def parse_registry_body(data: str) -> dict[str, str]:
 
 
 def parse_device_info(data: str) -> dict[str, str]:
-    return parse_kv_pairs(data, separator="\n")
+    info = parse_kv_pairs(data, separator="\n", key_transform=trim_tilde_prefix)
+    # A real SpeedFace-V5L INFO response uses ``MAC`` while cdata/registry
+    # commonly uses ``MACAddress``. Normalize the transport spelling once.
+    if "MAC" in info and "MACAddress" not in info:
+        info["MACAddress"] = info["MAC"]
+    return info
+
+
+def parse_info_command_response(data: str) -> dict[str, str]:
+    """Extract device inventory from a successful ``devicecmd`` INFO reply."""
+    lines = []
+    for line in data.replace("\r", "").split("\n"):
+        # The first line carries correlation metadata (ID/Return/CMD), not a
+        # device option. Remaining lines are the exact INFO inventory.
+        if line.strip().upper().startswith(("ID=", "RETURN=", "CMD=")):
+            continue
+        lines.append(line)
+    return parse_device_info("\n".join(lines))
 
 
 def parse_userinfo(data: str, serial_number: str = "") -> tuple[list[UserRecord], ParseStats]:
@@ -332,6 +349,7 @@ __all__ = [
     "parse_attlog",
     "parse_command_results",
     "parse_device_info",
+    "parse_info_command_response",
     "parse_kv_pairs",
     "parse_registry_body",
     "parse_rtlog",

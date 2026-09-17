@@ -18,7 +18,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adms.commands import CommandType
-from app.adms.parser import CommandResult
+from app.adms.parser import CommandResult, parse_info_command_response
 from app.core.config import get_settings
 from app.core.constants import (
     COMMAND_STATUS_CANCELLED,
@@ -30,6 +30,7 @@ from app.core.constants import (
 )
 from app.core.exceptions import CommandQueueFullError, DeviceNotFoundError
 from app.models.device import Device, DeviceCommand
+from app.services import device as device_svc
 from app.services import events as event_svc
 
 
@@ -190,6 +191,17 @@ async def confirm_result(
         row.response = response
         row.status = COMMAND_STATUS_CONFIRMED
         device.last_command_result_at = now
+        if row.command_type == CommandType.INFO.value:
+            info = parse_info_command_response(response)
+            if info:
+                device_svc.merge_options(device, info)
+                device.last_device_info = info
+                await event_svc.emit(
+                    session,
+                    device_id=device.id,
+                    event_type="device_info_received",
+                    payload={"source": "devicecmd", "option_count": len(info)},
+                )
         await session.flush()
         await event_svc.emit(
             session,

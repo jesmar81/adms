@@ -63,6 +63,7 @@ decode=(tshark -r "$capture" -d "tcp.port==$server_port,http")
   -E header=y -E separator=$'\t' -E quote=d -E occurrence=f \
   -e frame.number -e frame.time_iso -e tcp.stream \
   -e ip.src -e tcp.srcport -e ip.dst -e tcp.dstport \
+  -e http.request -e http.response \
   -e http.request.method -e http.host -e http.request.uri \
   -e http.response.code -e http.content_length \
   > "$output_dir/http-summary.tsv"

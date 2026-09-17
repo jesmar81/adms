@@ -179,7 +179,7 @@ if ($LASTEXITCODE -ne 0) { throw "tshark no pudo decodificar la captura (código
 
 $httpSummary = Join-Path $decoded 'http-summary.tsv'
 $rows = if (Test-Path -LiteralPath $httpSummary) { Import-Csv -LiteralPath $httpSummary -Delimiter "`t" } else { @() }
-function Count-Uri([string]$Fragment) { return @($rows | Where-Object { $_.'http.request.uri' -like "*$Fragment*" }).Count }
+function Count-Uri([string]$Fragment) { return @($rows | Where-Object { $_.'http.request' -eq '1' -and $_.'http.request.uri' -like "*$Fragment*" }).Count }
 $report = [ordered]@{
     capture = Split-Path -Leaf $pcap
     sha256 = $hash
@@ -193,7 +193,7 @@ $report = [ordered]@{
         registry = Count-Uri '/iclock/registry'
         push = Count-Uri '/iclock/push'
     }
-    http_error_responses = @($rows | Where-Object { $_.'http.response.code' -match '^[45]' }).Count
+    http_error_responses = @($rows | Where-Object { $_.'http.response' -eq '1' -and $_.'http.response.code' -match '^[45]' }).Count
     next_step = 'Entrega sólo el PCAP, metadata, timeline y validation-summary al responsable técnico por canal privado. No los subas a Git.'
 }
 $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $summary -Encoding utf8
