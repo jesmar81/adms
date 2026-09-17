@@ -5,6 +5,7 @@ import type {
   Company,
   CorporateGroup,
   Device,
+  DeviceCapabilityProfile,
   DeviceCommand,
   DeviceEvent,
   DeviceUser,
@@ -168,6 +169,10 @@ class ApiClient {
 
   device(id: string): Promise<Device> {
     return this.request(`/api/v1/devices/${id}`);
+  }
+
+  deviceCapabilities(id: string): Promise<DeviceCapabilityProfile> {
+    return this.request(`/api/v1/devices/${id}/capabilities`);
   }
 
   patchDevice(id: string, body: Record<string, unknown>): Promise<Device> {

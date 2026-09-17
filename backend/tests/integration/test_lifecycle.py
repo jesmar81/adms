@@ -124,6 +124,28 @@ async def test_acc_security_push_blocks_unvalidated_legacy_user_wire(life_client
     assert response.json()["error"]["code"] == "DEVICE_PROTOCOL_EVIDENCE_REQUIRED"
 
 
+async def test_security_push_capabilities_are_evidence_based(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "ACCCAPS1")
+    await life_client.post("/iclock/registry?SN=ACCCAPS1", content="DeviceType=acc")
+    await life_client.post(
+        "/iclock/cdata?SN=ACCCAPS1&table=rtlog",
+        content="time=2024-03-15 08:30:00\tpin=1\tinoutstatus=0\tverifytype=15",
+    )
+    await life_client.post(
+        f"/api/v1/devices/{device_id}/commands", json={"command_type": "INFO", "params": {}}
+    )
+    await _drain(life_client, "ACCCAPS1")
+    await life_client.post(
+        "/iclock/devicecmd?SN=ACCCAPS1",
+        content="ID=1&Return=0&CMD=INFO\n~DeviceName=SpeedFace-V5L\nFWVersion=1.1.9",
+    )
+    profile = (await life_client.get(f"/api/v1/devices/{device_id}/capabilities")).json()
+    assert profile["profile"] == "security_push_acc"
+    assert profile["confirmed"]["realtime_attendance"] is True
+    assert profile["confirmed"]["info_command"] is True
+    assert "user_import" in profile["blocked_operations"]
+
+
 async def test_failed_confirm_marks_failed(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(settings, "zkteco_command_max_attempts", 1)
     device_id = await _device_id(life_client, "LIFE002")

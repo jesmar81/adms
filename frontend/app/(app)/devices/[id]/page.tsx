@@ -13,7 +13,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { DataTable } from "@/components/ui/table";
 import type { Column } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
-import type { AttendanceRow, Device, DeviceCommand, DeviceEvent, DeviceUser } from "@/types";
+import type { AttendanceRow, Device, DeviceCapabilityProfile, DeviceCommand, DeviceEvent, DeviceUser } from "@/types";
 
 const COUNTERS = [
   "UserCount",
@@ -45,6 +45,14 @@ const TABS = [
   { id: "commands", label: "Comandos" },
   { id: "events", label: "Eventos" },
 ] as const;
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  realtime_attendance: "Checadas en tiempo real",
+  realtime_state: "Estado del equipo",
+  command_poll: "Consulta de comandos",
+  info_command: "Inventario del equipo",
+  user_querydata_received: "Consulta de usuarios",
+};
 
 type Tab = (typeof TABS)[number]["id"];
 
@@ -98,6 +106,7 @@ const CMD_COLUMNS: Column<DeviceCommand>[] = [
 function DetailInner({ id }: { id: string }) {
   const { notify } = useToast();
   const [device, setDevice] = useState<Device | null>(null);
+  const [capabilities, setCapabilities] = useState<DeviceCapabilityProfile | null>(null);
   const [tab, setTab] = useState<Tab>("users");
   const [users, setUsers] = useState<DeviceUser[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
@@ -115,16 +124,18 @@ function DetailInner({ id }: { id: string }) {
     try {
       const d = await api.device(id);
       setDevice(d);
-      const [u, a, c, e] = await Promise.all([
+      const [u, a, c, e, profile] = await Promise.all([
         api.deviceUsers(id),
         api.attendance({ device_id: id, limit: "20" }),
         api.deviceCommands(id),
         api.deviceEvents(id),
+        api.deviceCapabilities(id),
       ]);
       setUsers(u);
       setAttendance(a);
       setCommands(c);
       setEvents(e);
+      setCapabilities(profile);
     } catch (err) {
       setError(err);
     }
@@ -225,6 +236,42 @@ function DetailInner({ id }: { id: string }) {
           ))}
         </dl>
       </Card>
+
+      {capabilities ? (
+        <Card className="mt-4 p-5 md:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-[15px] font-semibold tracking-tight">Perfil de integración</h2>
+              <p className="mt-0.5 text-[13px] text-zinc-500">
+                Estado derivado de tráfico y confirmaciones reales del reloj.
+              </p>
+              {capabilities.firmware ? (
+                <p className="mt-1 text-xs text-zinc-500">Firmware: {capabilities.firmware}</p>
+              ) : null}
+            </div>
+            <Badge tone={capabilities.profile === "security_push_acc" ? "sky" : "zinc"}>
+              {capabilities.profile === "security_push_acc" ? "Security PUSH A&C" : "ADMS legacy"}
+            </Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {Object.entries(capabilities.confirmed).map(([key, confirmed]) => (
+              <div key={key} className="rounded-xl border border-line-subtle bg-zinc-50/60 px-3 py-2">
+                <p className="text-xs text-zinc-500">{CAPABILITY_LABELS[key] ?? key}</p>
+                <p className={`mt-1 text-sm font-medium ${confirmed ? "text-emerald-700" : "text-zinc-500"}`}>
+                  {confirmed ? "Confirmado" : "Pendiente"}
+                </p>
+              </div>
+            ))}
+          </div>
+          {capabilities.blocked_operations.length ? (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">Sincronización de usuarios protegida</p>
+              <p className="mt-1">Bloqueado: {capabilities.blocked_operations.join(", ")}.</p>
+              <p className="mt-1 text-amber-800">{capabilities.next_validation}</p>
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
 
       <Can permission="devices.write">
         <Card className="mt-4 p-5 md:p-6">

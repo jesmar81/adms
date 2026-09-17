@@ -10,11 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adms.commands import CommandType, build_command, require_validated_user_command_profile
+from app.adms.commands import (
+    CommandType,
+    build_command,
+    is_security_push_device,
+    require_validated_user_command_profile,
+)
 from app.api.v1 import deps
 from app.api.v1.schemas import CommandIn, CommandOut, DeviceOut, DevicePatch
 from app.core.database import get_db
-from app.models.device import Device, DeviceCommand, DeviceEvent
+from app.models.device import AdmsPayload, Device, DeviceCommand, DeviceEvent
 from app.models.hr import Site
 from app.models.user import User
 from app.services import audit as audit_svc
@@ -172,6 +177,69 @@ async def device_events(
         }
         for e in result.scalars().all()
     ]
+
+
+@router.get("/{device_id}/capabilities")
+async def device_capabilities(
+    device_id: uuid.UUID,
+    _user: User = Depends(deps.require_permission("devices.read")),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return evidence-based operations, never guessed firmware support."""
+    device = await session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    payload_types = set(
+        (
+            await session.execute(
+                select(AdmsPayload.data_type)
+                .where(AdmsPayload.device_id == device.id, AdmsPayload.data_type.is_not(None))
+                .distinct()
+            )
+        ).scalars()
+    )
+    confirmed_info = bool(
+        await session.scalar(
+            select(func.count())
+            .select_from(DeviceCommand)
+            .where(
+                DeviceCommand.device_id == device.id,
+                DeviceCommand.command_type == CommandType.INFO.value,
+                DeviceCommand.status == "confirmed",
+                DeviceCommand.return_code == 0,
+            )
+        )
+    )
+    security_push = is_security_push_device(device)
+    querydata_user_types = {
+        "QUERYDATA:user",
+        "QUERYDATA:users",
+        "QUERYDATA:userinfo",
+    }
+    querydata_user_seen = any(item in payload_types for item in querydata_user_types)
+    return {
+        "profile": "security_push_acc" if security_push else "legacy_adms",
+        "firmware": device.firmware_version,
+        "confirmed": {
+            "realtime_attendance": "RTLOG" in payload_types,
+            "realtime_state": "RTSTATE" in payload_types,
+            "command_poll": device.last_command_poll_at is not None,
+            "info_command": confirmed_info,
+            "user_querydata_received": querydata_user_seen,
+        },
+        "safe_commands": ["INFO", "CHECK", "LOG", "GET_OPTION"],
+        "blocked_operations": (
+            ["user_import", "user_create", "user_update", "user_delete"]
+            if security_push and not querydata_user_seen
+            else []
+        ),
+        "next_validation": (
+            "Capture a device-originated user query that posts /iclock/querydata; "
+            "do not use legacy USERINFO commands on this profile."
+            if security_push and not querydata_user_seen
+            else None
+        ),
+    }
 
 
 @router.post("/{device_id}/commands", response_model=CommandOut, status_code=201)

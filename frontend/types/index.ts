@@ -15,6 +15,21 @@ export interface Device {
   options: Record<string, string>;
 }
 
+export interface DeviceCapabilityProfile {
+  profile: "security_push_acc" | "legacy_adms";
+  firmware: string | null;
+  confirmed: {
+    realtime_attendance: boolean;
+    realtime_state: boolean;
+    command_poll: boolean;
+    info_command: boolean;
+    user_querydata_received: boolean;
+  };
+  safe_commands: string[];
+  blocked_operations: string[];
+  next_validation: string | null;
+}
+
 export interface AttendanceRow {
   id: string;
   device_id: string;
