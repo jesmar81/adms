@@ -146,6 +146,12 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
             json={"corporate_group_id": group["id"], "first_name": "Ana", "last_name": "López"},
         )
     ).json()
+    assert person["nationality"] == "Mexicana"
+    invalid_profile = await life_client.patch(
+        f"/api/v1/people/{person['id']}",
+        json={"nationality": "Otra", "birth_state": "Distrito Federal"},
+    )
+    assert invalid_profile.status_code == 422
     updated = await life_client.patch(
         f"/api/v1/people/{person['id']}", json={"birth_date": "1990-01-02", "postal_code": "06000"}
     )
@@ -155,6 +161,9 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         json={"curp": "LOPA900102HDFXXX01", "rfc": "LOPA900102AB1", "nss": "12345678901"},
     )
     assert identifiers.json()["curp"] == "LOPA900102HDFXXX01"
+    shown_identifiers = await life_client.get(f"/api/v1/people/{person['id']}/sensitive")
+    assert shown_identifiers.status_code == 200
+    assert shown_identifiers.json()["nss"] == "12345678901"
     slots = [
         {"day_of_week": day, "kind": kind, "expected_at": value}
         for day in range(5)
@@ -181,6 +190,11 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-01"},
     )
     assert assignment.status_code == 201
+    overlapping_assignment = await life_client.post(
+        f"/api/v1/employments/{employment['id']}/schedule-assignments",
+        json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-02"},
+    )
+    assert overlapping_assignment.status_code == 409
     compensation = await life_client.put(
         f"/api/v1/employments/{employment['id']}/compensation",
         json={

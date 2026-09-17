@@ -5,9 +5,66 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+Nationality = Literal["Mexicana", "Extranjera"]
+MaritalStatus = Literal[
+    "Soltero(a)",
+    "Casado(a)",
+    "Unión libre",
+    "Divorciado(a)",
+    "Viudo(a)",
+    "Separado(a)",
+]
+EmergencyRelationship = Literal[
+    "Madre",
+    "Padre",
+    "Cónyuge",
+    "Pareja",
+    "Hijo(a)",
+    "Hermano(a)",
+    "Tutor(a)",
+    "Otro",
+]
+
+MEXICAN_STATES = frozenset(
+    (
+        "Aguascalientes",
+        "Baja California",
+        "Baja California Sur",
+        "Campeche",
+        "Chiapas",
+        "Chihuahua",
+        "Ciudad de México",
+        "Coahuila de Zaragoza",
+        "Colima",
+        "Durango",
+        "Estado de México",
+        "Guanajuato",
+        "Guerrero",
+        "Hidalgo",
+        "Jalisco",
+        "Michoacán de Ocampo",
+        "Morelos",
+        "Nayarit",
+        "Nuevo León",
+        "Oaxaca",
+        "Puebla",
+        "Querétaro",
+        "Quintana Roo",
+        "San Luis Potosí",
+        "Sinaloa",
+        "Sonora",
+        "Tabasco",
+        "Tamaulipas",
+        "Tlaxcala",
+        "Veracruz de Ignacio de la Llave",
+        "Yucatán",
+        "Zacatecas",
+    )
+)
 
 
 class ErrorBody(BaseModel):
@@ -84,7 +141,18 @@ class SiteOut(SiteIn):
     model_config = {"from_attributes": True}
 
 
-class PersonIn(BaseModel):
+class PersonProfileCatalog(BaseModel):
+    """Server-side catalog rules for the common Mexican employee profile."""
+
+    @field_validator("birth_state", "address_state", check_fields=False)
+    @classmethod
+    def validate_mexican_state(cls, value: str | None) -> str | None:
+        if value is not None and value not in MEXICAN_STATES:
+            raise ValueError("must be one of Mexico's 32 federal entities")
+        return value
+
+
+class PersonIn(PersonProfileCatalog):
     corporate_group_id: uuid.UUID
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
@@ -94,8 +162,8 @@ class PersonIn(BaseModel):
     phone: str | None = Field(default=None, max_length=32)
     birth_date: date | None = None
     sex: str | None = Field(default=None, max_length=32)
-    marital_status: str | None = Field(default=None, max_length=32)
-    nationality: str | None = Field(default=None, max_length=80)
+    marital_status: MaritalStatus | None = None
+    nationality: Nationality | None = "Mexicana"
     birth_state: str | None = Field(default=None, max_length=100)
     address_street: str | None = Field(default=None, max_length=150)
     address_ext_number: str | None = Field(default=None, max_length=20)
@@ -106,7 +174,7 @@ class PersonIn(BaseModel):
     postal_code: str | None = Field(default=None, max_length=10)
     emergency_contact_name: str | None = Field(default=None, max_length=150)
     emergency_contact_phone: str | None = Field(default=None, max_length=32)
-    emergency_contact_relationship: str | None = Field(default=None, max_length=80)
+    emergency_contact_relationship: EmergencyRelationship | None = None
 
 
 class PersonOut(PersonIn):
@@ -116,7 +184,7 @@ class PersonOut(PersonIn):
     model_config = {"from_attributes": True}
 
 
-class PersonPatch(BaseModel):
+class PersonPatch(PersonProfileCatalog):
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     second_last_name: str | None = Field(default=None, max_length=100)
@@ -125,8 +193,8 @@ class PersonPatch(BaseModel):
     phone: str | None = Field(default=None, max_length=32)
     birth_date: date | None = None
     sex: str | None = Field(default=None, max_length=32)
-    marital_status: str | None = Field(default=None, max_length=32)
-    nationality: str | None = Field(default=None, max_length=80)
+    marital_status: MaritalStatus | None = None
+    nationality: Nationality | None = None
     birth_state: str | None = Field(default=None, max_length=100)
     address_street: str | None = Field(default=None, max_length=150)
     address_ext_number: str | None = Field(default=None, max_length=20)
@@ -137,7 +205,7 @@ class PersonPatch(BaseModel):
     postal_code: str | None = Field(default=None, max_length=10)
     emergency_contact_name: str | None = Field(default=None, max_length=150)
     emergency_contact_phone: str | None = Field(default=None, max_length=32)
-    emergency_contact_relationship: str | None = Field(default=None, max_length=80)
+    emergency_contact_relationship: EmergencyRelationship | None = None
     active: bool | None = None
 
 

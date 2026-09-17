@@ -87,7 +87,7 @@ export default function PeoplePage() {
         email: email.trim() || null,
         phone: phone.trim() || null,
         birth_date: birthDate || null,
-        nationality: nationality.trim() || null,
+        nationality,
       });
       setFirstName("");
       setLastName("");
@@ -112,7 +112,7 @@ export default function PeoplePage() {
       <Card className="mb-5 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
           <div className="lg:w-64"><Field label="Grupo corporativo">{(id) => <Select id={id} value={groupId} onChange={(e) => setGroupId(e.target.value)} disabled={!groups.length}><option value="">Selecciona un grupo</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</Select>}</Field></div>
-          <div className="grid flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4"><Field label="Nombre">{(id) => <Input id={id} value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={!groupId} />}</Field><Field label="Apellido paterno">{(id) => <Input id={id} value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={!groupId} />}</Field><Field label="Apellido materno">{(id) => <Input id={id} value={secondLastName} onChange={(e) => setSecondLastName(e.target.value)} disabled={!groupId} />}</Field><Field label="Correo">{(id) => <Input id={id} type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!groupId} />}</Field><Field label="Teléfono">{(id) => <Input id={id} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={!groupId} />}</Field><Field label="Nacimiento">{(id) => <Input id={id} type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} disabled={!groupId} />}</Field><Field label="Nacionalidad">{(id) => <Input id={id} value={nationality} onChange={(e) => setNationality(e.target.value)} disabled={!groupId} />}</Field></div>
+          <div className="grid flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4"><Field label="Nombre">{(id) => <Input id={id} value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={!groupId} />}</Field><Field label="Apellido paterno">{(id) => <Input id={id} value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={!groupId} />}</Field><Field label="Apellido materno">{(id) => <Input id={id} value={secondLastName} onChange={(e) => setSecondLastName(e.target.value)} disabled={!groupId} />}</Field><Field label="Correo">{(id) => <Input id={id} type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!groupId} />}</Field><Field label="Teléfono">{(id) => <Input id={id} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={!groupId} />}</Field><Field label="Nacimiento">{(id) => <Input id={id} type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} disabled={!groupId} />}</Field><Field label="Nacionalidad">{(id) => <Select id={id} value={nationality} onChange={(e) => setNationality(e.target.value)} disabled={!groupId}><option value="Mexicana">Mexicana</option><option value="Extranjera">Extranjera</option></Select>}</Field></div>
           <Button variant="primary" icon={<Plus className="h-4 w-4" />} className="w-10 !px-0" aria-label="Crear persona" title="Crear persona" onClick={() => void create()} loading={saving} disabled={!groupId || !firstName.trim() || !lastName.trim()} />
         </div>
       </Card>
