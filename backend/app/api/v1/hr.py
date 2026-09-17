@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from datetime import UTC, datetime, timedelta
+from json import JSONDecodeError, dumps, loads
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import deps
 from app.api.v1.schemas import (
+    AttendanceOut,
     CompanyIn,
     CompanyOut,
     CorporateGroupIn,
@@ -20,6 +24,7 @@ from app.api.v1.schemas import (
     EnrollmentRequestIn,
     EnrollmentRequestOut,
     EnrollmentRequestStatusIn,
+    PersonAttendancePageOut,
     PersonIn,
     PersonOut,
     ScheduleAssignmentIn,
@@ -31,7 +36,7 @@ from app.api.v1.schemas import (
     WorkScheduleOut,
 )
 from app.core.database import get_db
-from app.models.device import Device
+from app.models.device import AttendanceLog, Device, DeviceUser
 from app.models.hr import (
     Company,
     CorporateGroup,
@@ -170,6 +175,24 @@ async def create_site(
 people_router = APIRouter(prefix="/people", tags=["people"])
 
 
+def _attendance_cursor(row: AttendanceLog) -> str:
+    payload = dumps({"recorded_at": row.recorded_at.isoformat(), "id": str(row.id)})
+    return urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+
+
+def _parse_attendance_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        value = loads(urlsafe_b64decode(padded.encode()).decode())
+        recorded_at = datetime.fromisoformat(value["recorded_at"])
+        row_id = uuid.UUID(value["id"])
+    except (KeyError, TypeError, ValueError, JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid attendance cursor") from exc
+    if recorded_at.tzinfo is None:
+        raise HTTPException(status_code=422, detail="Invalid attendance cursor")
+    return recorded_at, row_id
+
+
 @people_router.get("", response_model=list[PersonOut])
 async def list_people(
     corporate_group_id: uuid.UUID,
@@ -201,6 +224,81 @@ async def create_person(
     await _audit(session, user, "person.create", "person", row.id, rid)
     await session.commit()
     return row
+
+
+@people_router.get("/{person_id}", response_model=PersonOut)
+async def get_person(
+    person_id: uuid.UUID,
+    _user: User = Depends(deps.require_permission("people.read")),
+    session: AsyncSession = Depends(get_db),
+) -> Person:
+    row = await session.get(Person, person_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    return row
+
+
+@people_router.get("/{person_id}/attendance", response_model=PersonAttendancePageOut)
+async def list_person_attendance(
+    person_id: uuid.UUID,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=100, ge=1, le=100),
+    _user: User = Depends(deps.require_permission("attendance.read")),
+    session: AsyncSession = Depends(get_db),
+) -> PersonAttendancePageOut:
+    """List captured marks, newest first, without offset pagination drift.
+
+    A check-in belongs to a person only after a device identity is linked to
+    that person.  This intentionally exposes the raw device record; schedule
+    interpretation is a separate payroll/attendance-calculation concern.
+    """
+    if await session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value is not None and value.tzinfo is None:
+            raise HTTPException(status_code=422, detail=f"{label} must include a timezone")
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must be <= date_to")
+    if date_from is None:
+        date_from = datetime.now(UTC) - timedelta(days=30)
+
+    query = (
+        select(AttendanceLog)
+        .join(DeviceUser, AttendanceLog.device_user_id == DeviceUser.id)
+        .where(DeviceUser.person_id == person_id, AttendanceLog.recorded_at >= date_from)
+        .order_by(AttendanceLog.recorded_at.desc(), AttendanceLog.id.desc())
+        .limit(limit + 1)
+    )
+    if date_to is not None:
+        query = query.where(AttendanceLog.recorded_at <= date_to)
+    if cursor is not None:
+        cursor_at, cursor_id = _parse_attendance_cursor(cursor)
+        query = query.where(
+            or_(
+                AttendanceLog.recorded_at < cursor_at,
+                and_(AttendanceLog.recorded_at == cursor_at, AttendanceLog.id < cursor_id),
+            )
+        )
+    rows = list((await session.execute(query)).scalars())
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    return PersonAttendancePageOut(
+        items=[
+            AttendanceOut(
+                id=row.id,
+                device_id=row.device_id,
+                device_user_pin=row.device_user_pin,
+                recorded_at=row.recorded_at,
+                status=row.status,
+                verify_mode=row.verify_mode,
+                work_code=row.work_code,
+            )
+            for row in page_rows
+        ],
+        next_cursor=_attendance_cursor(page_rows[-1]) if has_more and page_rows else None,
+    )
 
 
 employments_router = APIRouter(prefix="/employments", tags=["employments"])

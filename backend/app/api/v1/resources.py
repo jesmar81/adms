@@ -15,6 +15,7 @@ from app.api.v1 import deps
 from app.api.v1.schemas import AttendanceOut, DeviceUserIn, DeviceUserOut, DeviceUserUpdate
 from app.core.database import get_db
 from app.models.device import AttendanceLog, Device, DeviceUser
+from app.models.hr import Company, Person, Site
 from app.models.user import AuditLog, User
 from app.services import audit as audit_svc
 from app.services import command as command_svc
@@ -119,6 +120,25 @@ def _user_out(row: DeviceUser) -> DeviceUserOut:
     )
 
 
+async def _validate_person_link(
+    session: AsyncSession, device: Device, person_id: uuid.UUID | None
+) -> None:
+    """Ensure a device identity cannot cross corporate-group boundaries."""
+    if person_id is None:
+        return
+    person = await session.get(Person, person_id)
+    if person is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    if device.site_id is None:
+        return
+    site = await session.get(Site, device.site_id)
+    if site is None:
+        return
+    company = await session.get(Company, site.company_id)
+    if company is not None and company.corporate_group_id != person.corporate_group_id:
+        raise HTTPException(status_code=422, detail="Person and device belong to different groups")
+
+
 @device_users_router.post("/{device_id}", response_model=DeviceUserOut, status_code=201)
 async def create_device_user(
     device_id: uuid.UUID,
@@ -135,6 +155,7 @@ async def create_device_user(
     device = await session.get(Device, device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
+    await _validate_person_link(session, device, payload.person_id)
     existing = await session.execute(
         select(DeviceUser).where(DeviceUser.device_id == device.id, DeviceUser.pin == payload.pin)
     )
@@ -147,6 +168,7 @@ async def create_device_user(
     )
     row = DeviceUser(
         device_id=device.id,
+        person_id=payload.person_id,
         pin=payload.pin,
         name=payload.name,
         privilege=payload.privilege,
@@ -201,6 +223,10 @@ async def update_device_user(
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
     changes: dict[str, object] = {}
+    if "person_id" in payload.model_fields_set:
+        await _validate_person_link(session, device, payload.person_id)
+        row.person_id = payload.person_id
+        changes["person_id"] = str(payload.person_id) if payload.person_id else None
     name = payload.name if payload.name is not None else row.name
     privilege = payload.privilege if payload.privilege is not None else row.privilege
     card = payload.card if payload.card is not None else (row.card_number or "")

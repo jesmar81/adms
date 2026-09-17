@@ -232,7 +232,15 @@ class AttendanceOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PersonAttendancePageOut(BaseModel):
+    """A stable keyset page of raw attendance marks for one person."""
+
+    items: list[AttendanceOut]
+    next_cursor: str | None = None
+
+
 class DeviceUserIn(BaseModel):
+    person_id: uuid.UUID | None = None
     pin: str = Field(min_length=1, max_length=64)
     name: str = Field(default="", max_length=255)
     privilege: int = Field(default=0, ge=0, le=14)
@@ -240,6 +248,7 @@ class DeviceUserIn(BaseModel):
 
 
 class DeviceUserUpdate(BaseModel):
+    person_id: uuid.UUID | None = None
     name: str | None = Field(default=None, max_length=255)
     privilege: int | None = Field(default=None, ge=0, le=14)
     card: str | None = Field(default=None, max_length=128)

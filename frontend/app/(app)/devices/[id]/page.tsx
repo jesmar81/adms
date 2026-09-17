@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Can } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
@@ -372,6 +372,7 @@ function DetailInner({ id }: { id: string }) {
   );
 }
 
-export default function Page({ params }: { params: { id: string } }) {
-  return <DetailInner id={params.id} />;
+export default function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  return <DetailInner id={id} />;
 }

@@ -2,11 +2,19 @@ import type {
   AdminUser,
   AttendanceRow,
   AuditEntry,
+  Company,
+  CorporateGroup,
   Device,
   DeviceCommand,
   DeviceEvent,
   DeviceUser,
+  Employment,
+  EnrollmentRequest,
   Me,
+  Person,
+  PersonAttendancePage,
+  Site,
+  WorkSchedule,
 } from "@/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -172,6 +180,73 @@ class ApiClient {
 
   attendance(params: Record<string, string> = {}): Promise<AttendanceRow[]> {
     return this.get("/api/v1/attendance", params);
+  }
+
+  corporateGroups(): Promise<CorporateGroup[]> {
+    return this.request("/api/v1/corporate-groups");
+  }
+
+  createCorporateGroup(body: Record<string, unknown>): Promise<CorporateGroup> {
+    return this.request("/api/v1/corporate-groups", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  companies(groupId?: string): Promise<Company[]> {
+    return this.get("/api/v1/companies", groupId ? { corporate_group_id: groupId } : {});
+  }
+
+  createCompany(body: Record<string, unknown>): Promise<Company> {
+    return this.request("/api/v1/companies", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  sites(companyId?: string): Promise<Site[]> {
+    return this.get("/api/v1/sites", companyId ? { company_id: companyId } : {});
+  }
+
+  createSite(body: Record<string, unknown>): Promise<Site> {
+    return this.request("/api/v1/sites", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  people(corporateGroupId: string): Promise<Person[]> {
+    return this.get("/api/v1/people", { corporate_group_id: corporateGroupId });
+  }
+
+  person(personId: string): Promise<Person> {
+    return this.request(`/api/v1/people/${personId}`);
+  }
+
+  personAttendance(personId: string, params: Record<string, string> = {}): Promise<PersonAttendancePage> {
+    return this.get(`/api/v1/people/${personId}/attendance`, params);
+  }
+
+  createPerson(body: Record<string, unknown>): Promise<Person> {
+    return this.request("/api/v1/people", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  employments(params: Record<string, string> = {}): Promise<Employment[]> {
+    return this.get("/api/v1/employments", params);
+  }
+
+  createEmployment(personId: string, body: Record<string, unknown>): Promise<Employment> {
+    return this.request(`/api/v1/people/${personId}/employments`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  workSchedules(companyId?: string): Promise<WorkSchedule[]> {
+    return this.get("/api/v1/work-schedules", companyId ? { company_id: companyId } : {});
+  }
+
+  createWorkSchedule(body: Record<string, unknown>): Promise<WorkSchedule> {
+    return this.request("/api/v1/work-schedules", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  enrollmentRequests(): Promise<EnrollmentRequest[]> {
+    return this.request("/api/v1/enrollment-requests");
+  }
+
+  createEnrollmentRequest(body: Record<string, unknown>): Promise<EnrollmentRequest> {
+    return this.request("/api/v1/enrollment-requests", { method: "POST", body: JSON.stringify(body) });
   }
 
   deviceUsers(deviceId?: string): Promise<DeviceUser[]> {

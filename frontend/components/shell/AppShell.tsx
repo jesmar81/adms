@@ -4,6 +4,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Clock,
+  Building2,
   Fingerprint,
   LayoutDashboard,
   LogOut,
@@ -47,10 +48,19 @@ const NAV: NavSection[] = [
     ],
   },
   {
+    title: "Organización",
+    items: [
+      { href: "/companies", label: "Empresas y sitios", icon: <Building2 className="h-[18px] w-[18px]" aria-hidden />, perm: "companies.read" },
+      { href: "/people", label: "Personas", icon: <Users className="h-[18px] w-[18px]" aria-hidden />, perm: "people.read" },
+      { href: "/work-schedules", label: "Horarios", icon: <Clock className="h-[18px] w-[18px]" aria-hidden />, perm: "schedules.read" },
+    ],
+  },
+  {
     title: "Asistencia",
     items: [
       { href: "/attendance", label: "Marcaciones", icon: <Clock className="h-[18px] w-[18px]" aria-hidden />, perm: "attendance.read" },
       { href: "/device-users", label: "Personal en reloj", icon: <Users className="h-[18px] w-[18px]" aria-hidden />, perm: "device_users.read" },
+      { href: "/enrollments", label: "Enrolamientos", icon: <Fingerprint className="h-[18px] w-[18px]" aria-hidden />, perm: "enrollments.read" },
     ],
   },
   {
@@ -72,6 +82,10 @@ const CRUMB_TITLES: Record<string, string> = {
   commands: "Comandos",
   attendance: "Marcaciones",
   "device-users": "Personal en reloj",
+  companies: "Empresas y sitios",
+  people: "Personas",
+  "work-schedules": "Horarios",
+  enrollments: "Enrolamientos",
   users: "Usuarios",
   audit: "Auditoría",
 };
