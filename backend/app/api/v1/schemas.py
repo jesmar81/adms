@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -36,7 +36,165 @@ class DevicePatch(BaseModel):
     name: str | None = Field(default=None, max_length=150)
     model: str | None = Field(default=None, max_length=100)
     timezone: str | None = Field(default=None, max_length=64)
+    site_id: uuid.UUID | None = None
     status: str | None = Field(default=None, pattern="^(disabled|active)$")
+
+
+class CorporateGroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=2, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class CorporateGroupOut(CorporateGroupIn):
+    id: uuid.UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class CompanyIn(BaseModel):
+    corporate_group_id: uuid.UUID
+    legal_name: str = Field(min_length=1, max_length=255)
+    trade_name: str | None = Field(default=None, max_length=255)
+    tax_id: str | None = Field(default=None, max_length=13)
+    employer_registration: str | None = Field(default=None, max_length=32)
+    timezone: str = Field(default="America/Mexico_City", max_length=64)
+
+
+class CompanyOut(CompanyIn):
+    id: uuid.UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class SiteIn(BaseModel):
+    company_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=150)
+    code: str = Field(min_length=1, max_length=50)
+    timezone: str = Field(default="America/Mexico_City", max_length=64)
+    address: str | None = None
+
+
+class SiteOut(SiteIn):
+    id: uuid.UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class PersonIn(BaseModel):
+    corporate_group_id: uuid.UUID
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    second_last_name: str | None = Field(default=None, max_length=100)
+    preferred_name: str | None = Field(default=None, max_length=150)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=32)
+
+
+class PersonOut(PersonIn):
+    id: uuid.UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class EmploymentIn(BaseModel):
+    company_id: uuid.UUID
+    employee_number: str = Field(min_length=1, max_length=64)
+    position: str | None = Field(default=None, max_length=150)
+    department: str | None = Field(default=None, max_length=150)
+    cost_center: str | None = Field(default=None, max_length=100)
+    manager_person_id: uuid.UUID | None = None
+    contract_type: str | None = Field(default=None, max_length=80)
+    started_on: date
+    ended_on: date | None = None
+
+
+class EmploymentOut(EmploymentIn):
+    id: uuid.UUID
+    person_id: uuid.UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class ScheduleSlotIn(BaseModel):
+    day_of_week: int = Field(ge=0, le=6)
+    kind: str = Field(pattern="^(entry|meal_out|meal_in|exit)$")
+    sequence: int = Field(default=1, ge=1, le=20)
+    expected_at: time
+    window_start: time | None = None
+    window_end: time | None = None
+    tolerance_minutes: int = Field(default=0, ge=0, le=1440)
+    required: bool = True
+
+
+class WorkScheduleIn(BaseModel):
+    company_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=150)
+    timezone: str = Field(default="America/Mexico_City", max_length=64)
+    slots: list[ScheduleSlotIn] = Field(default_factory=list, max_length=100)
+
+
+class ScheduleSlotOut(ScheduleSlotIn):
+    id: uuid.UUID
+    work_schedule_id: uuid.UUID
+
+    model_config = {"from_attributes": True}
+
+
+class WorkScheduleOut(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    name: str
+    timezone: str
+    version: int
+    active: bool
+    slots: list[ScheduleSlotOut] = Field(default_factory=list)
+
+
+class ScheduleAssignmentIn(BaseModel):
+    work_schedule_id: uuid.UUID
+    effective_from: date
+    effective_to: date | None = None
+
+
+class ScheduleAssignmentOut(ScheduleAssignmentIn):
+    id: uuid.UUID
+    employment_id: uuid.UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class EnrollmentRequestIn(BaseModel):
+    employment_id: uuid.UUID
+    device_id: uuid.UUID
+    methods: list[str] = Field(min_length=1, max_length=4)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class EnrollmentRequestStatusIn(BaseModel):
+    status: str = Field(
+        pattern="^(approved|awaiting_device_enrollment|verification_pending|completed|rejected|revoked)$"
+    )
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class EnrollmentRequestOut(BaseModel):
+    id: uuid.UUID
+    employment_id: uuid.UUID
+    device_id: uuid.UUID
+    methods: list[str]
+    status: str
+    requested_by: uuid.UUID | None = None
+    approved_by: uuid.UUID | None = None
+    completed_by: uuid.UUID | None = None
+    note: str | None = None
+
+    model_config = {"from_attributes": True}
 
 
 class RefreshIn(BaseModel):
@@ -52,6 +210,7 @@ class DeviceOut(BaseModel):
     platform: str | None = None
     ip_address: str | None = None
     mac_address: str | None = None
+    site_id: uuid.UUID | None = None
     timezone: str
     status: str
     derived_status: str | None = None
@@ -90,6 +249,7 @@ class DeviceUserUpdate(BaseModel):
 class DeviceUserOut(BaseModel):
     id: uuid.UUID
     device_id: uuid.UUID
+    person_id: uuid.UUID | None = None
     pin: str
     name: str
     privilege: int

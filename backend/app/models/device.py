@@ -40,6 +40,9 @@ class Device(Base, UUIDPKMixin, TimestampMixin):
     mac_address: Mapped[str | None] = mapped_column(String(50), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(INET(), nullable=True)
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("sites.id", ondelete="SET NULL"), nullable=True
+    )
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
 
     last_activity_at: Mapped[datetime | None] = mapped_column(
@@ -92,6 +95,9 @@ class DeviceUser(Base, UUIDPKMixin, TimestampMixin):
     device_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
     )
+    person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id", ondelete="SET NULL"), nullable=True
+    )
     pin: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     privilege: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -114,6 +120,7 @@ class DeviceUser(Base, UUIDPKMixin, TimestampMixin):
             "sync_state IN ('synced','pending','failed')", name="ck_device_users_sync_state"
         ),
         Index("ix_device_users_device", "device_id"),
+        Index("ix_device_users_person", "person_id"),
     )
 
 

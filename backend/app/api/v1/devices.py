@@ -15,6 +15,7 @@ from app.api.v1 import deps
 from app.api.v1.schemas import CommandIn, CommandOut, DeviceOut, DevicePatch
 from app.core.database import get_db
 from app.models.device import Device, DeviceCommand, DeviceEvent
+from app.models.hr import Site
 from app.models.user import User
 from app.services import audit as audit_svc
 from app.services import command as command_svc
@@ -35,6 +36,7 @@ def _to_out(device: Device) -> DeviceOut:
         # via asyncpg; DeviceOut expects str. str() is idempotent for str.
         ip_address=str(device.ip_address) if device.ip_address is not None else None,
         mac_address=device.mac_address,
+        site_id=device.site_id,
         timezone=device.timezone,
         status=device.status,
         derived_status=device_svc.derived_status(device),
@@ -100,6 +102,11 @@ async def patch_device(
             ) from exc
         device.timezone = payload.timezone
         changes["timezone"] = payload.timezone
+    if payload.site_id is not None:
+        if await session.get(Site, payload.site_id) is None:
+            raise HTTPException(status_code=404, detail="Site not found")
+        device.site_id = payload.site_id
+        changes["site_id"] = str(payload.site_id)
     if payload.status is not None:
         device.status = "disabled" if payload.status == "disabled" else "unknown"
         changes["status"] = device.status

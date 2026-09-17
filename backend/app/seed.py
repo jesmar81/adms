@@ -14,6 +14,7 @@ import os
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.models.device  # noqa: F401
+import app.models.hr  # noqa: F401
 from app.core.config import get_settings
 from app.models.base import Base
 from app.services.bootstrap import ensure_roles_permissions, ensure_superuser

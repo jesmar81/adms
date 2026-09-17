@@ -53,6 +53,7 @@ get_settings.cache_clear()
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 import app.models.device  # noqa: E402,F401
+import app.models.hr  # noqa: E402,F401
 import app.models.user  # noqa: E402,F401
 from app.core.database import reset_engine_for_tests  # noqa: E402
 from app.core.redis import get_redis  # noqa: E402

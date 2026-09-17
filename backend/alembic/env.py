@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import app.models.device  # noqa: F401
+import app.models.hr  # noqa: F401
 
 # Import all models so metadata is complete.
 import app.models.user  # noqa: F401

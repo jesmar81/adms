@@ -85,6 +85,19 @@ PERMISSIONS = (
     "users.write",
     "users.delete",
     "audit.read",
+    "companies.read",
+    "companies.write",
+    "sites.read",
+    "sites.write",
+    "people.read",
+    "people.write",
+    "employments.read",
+    "employments.write",
+    "schedules.read",
+    "schedules.write",
+    "enrollments.read",
+    "enrollments.write",
+    "enrollments.approve",
 )
 
 DEFAULT_ROLES: dict[str, list[str]] = {
@@ -99,6 +112,12 @@ DEFAULT_ROLES: dict[str, list[str]] = {
         "device_users.delete",
         "commands.read",
         "commands.execute",
+        "companies.read",
+        "sites.read",
+        "people.read",
+        "employments.read",
+        "schedules.read",
+        "enrollments.read",
     ],
     "viewer": [
         "devices.read",

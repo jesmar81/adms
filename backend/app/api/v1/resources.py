@@ -91,6 +91,7 @@ async def list_device_users(
         DeviceUserOut(
             id=r.id,
             device_id=r.device_id,
+            person_id=r.person_id,
             pin=r.pin,
             name=r.name,
             privilege=r.privilege,
@@ -107,6 +108,7 @@ def _user_out(row: DeviceUser) -> DeviceUserOut:
     return DeviceUserOut(
         id=row.id,
         device_id=row.device_id,
+        person_id=row.person_id,
         pin=row.pin,
         name=row.name,
         privilege=row.privilege,
