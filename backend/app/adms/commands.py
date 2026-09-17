@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.core.constants import GET_OPTION_KEYS
-from app.core.exceptions import InvalidCommandError
+from app.core.exceptions import DeviceProtocolEvidenceRequiredError, InvalidCommandError
+from app.models.device import Device
 
 
 class CommandType(StrEnum):
@@ -21,6 +22,30 @@ class CommandType(StrEnum):
     UPDATE_USERINFO = "UPDATE_USERINFO"
     DELETE_USERINFO = "DELETE_USERINFO"
     GET_OPTION = "GET_OPTION"
+
+
+_USER_MUTATION_COMMANDS = frozenset(
+    {CommandType.QUERY_USERINFO, CommandType.UPDATE_USERINFO, CommandType.DELETE_USERINFO}
+)
+
+
+def is_security_push_device(device: Device) -> bool:
+    """Identify an A&C Security PUSH terminal from persisted registration data."""
+    return str((device.options or {}).get("DeviceType", "")).lower() == "acc"
+
+
+def require_validated_user_command_profile(device: Device, command_type: CommandType) -> None:
+    """Block legacy USERINFO wire commands on an unvalidated ACC terminal.
+
+    SpeedFace-V5L A&C PUSH uses a different query/update dialect from legacy
+    ADMS. Sending legacy writes can appear successful in our queue while doing
+    nothing (or producing an ambiguous negative return) on the terminal.
+    """
+    if is_security_push_device(device) and command_type in _USER_MUTATION_COMMANDS:
+        raise DeviceProtocolEvidenceRequiredError(
+            "Security PUSH user synchronization is blocked until a real V5L "
+            "querydata/devicecmd capture validates its command format"
+        )
 
 
 def _reject_crlf(field: str, value: str) -> None:

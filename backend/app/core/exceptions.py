@@ -52,5 +52,11 @@ class CommandQueueFullError(AppError):
     status_code = 409
 
 
+class DeviceProtocolEvidenceRequiredError(ConflictError):
+    """An operation needs a device-specific wire capture before it is safe."""
+
+    code = "DEVICE_PROTOCOL_EVIDENCE_REQUIRED"
+
+
 class InvalidCommandError(ValidationError):
     code = "INVALID_COMMAND"

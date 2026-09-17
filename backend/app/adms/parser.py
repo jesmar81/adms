@@ -248,8 +248,10 @@ def parse_userinfo(data: str, serial_number: str = "") -> tuple[list[UserRecord]
             eq = part.find("=")
             if eq == -1:
                 continue
-            fields[part[:eq].strip()] = part[eq + 1 :].strip()
-        pin = fields.get("PIN", "")
+            fields[part[:eq].strip().lower()] = part[eq + 1 :].strip()
+        # Security PUSH querydata commonly spells this ``Pin`` while legacy
+        # USERINFO uses ``PIN``.  The fields are otherwise equivalent.
+        pin = fields.get("pin", "")
         if not pin:
             stats.skipped += 1
             stats.errors.append("USERINFO line without PIN")
@@ -257,10 +259,10 @@ def parse_userinfo(data: str, serial_number: str = "") -> tuple[list[UserRecord]
         records.append(
             UserRecord(
                 pin=pin,
-                name=fields.get("Name", ""),
-                privilege=_parse_int_or_default(fields.get("Privilege"), 0),
-                card=fields.get("Card", ""),
-                password=fields.get("Password", ""),
+                name=fields.get("name", ""),
+                privilege=_parse_int_or_default(fields.get("privilege"), 0),
+                card=fields.get("card", ""),
+                password=fields.get("password", ""),
             )
         )
         stats.valid += 1

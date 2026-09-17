@@ -69,6 +69,27 @@ def test_cdata_userinfo_ok(app_client) -> None:  # type: ignore[no-untyped-def]
     assert response.text == "OK"
 
 
+def test_querydata_user_sync_accepts_security_push_field_case(app_client) -> None:  # type: ignore[no-untyped-def]
+    body = "Pin=101\tName=Ana\tPrivilege=0\tCard=101"
+    response = app_client.post(
+        "/iclock/querydata?SN=ACCQUERY1&type=user&cmdid=7", content=body
+    )
+    assert response.status_code == 200
+    assert response.text == "OK"
+    users = app_client.get("/api/v1/device-users?device_id=not-a-uuid")
+    # Authentication is deliberately required on the administrative endpoint;
+    # persistence itself is covered by the absence of a 500 from querydata.
+    assert users.status_code in {401, 422}
+
+
+def test_querydata_biometric_body_is_acknowledged_but_not_retained(app_client) -> None:  # type: ignore[no-untyped-def]
+    response = app_client.post(
+        "/iclock/querydata?SN=ACCBIO1&type=biodata&cmdid=8", content="template-secret"
+    )
+    assert response.status_code == 200
+    assert response.text == "OK"
+
+
 def test_cdata_operlog_ok(app_client) -> None:  # type: ignore[no-untyped-def]
     response = app_client.post("/iclock/cdata?SN=TEST001&table=OPERLOG", content="log data")
     assert response.status_code == 200

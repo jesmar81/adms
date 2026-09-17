@@ -37,6 +37,8 @@ const COMMAND_TYPES = [
   "DELETE_USERINFO",
 ];
 
+const SECURITY_PUSH_SAFE_COMMAND_TYPES = ["INFO", "CHECK", "LOG", "GET_OPTION"];
+
 const TABS = [
   { id: "users", label: "Personal" },
   { id: "attendance", label: "Marcaciones" },
@@ -173,6 +175,8 @@ function DetailInner({ id }: { id: string }) {
   if (!device) return <LoadingState rows={6} />;
 
   const status = device.derived_status ?? device.status;
+  const isSecurityPush = String(device.options.DeviceType ?? "").toLowerCase() === "acc";
+  const commandTypes = isSecurityPush ? SECURITY_PUSH_SAFE_COMMAND_TYPES : COMMAND_TYPES;
   const info: [string, string][] = [
     ["Nombre", device.name ?? "—"],
     ["Modelo", device.model ?? "—"],
@@ -251,7 +255,7 @@ function DetailInner({ id }: { id: string }) {
                       value={cmdType}
                       onChange={(e) => setCmdType(e.target.value)}
                     >
-                      {COMMAND_TYPES.map((t) => (
+                      {commandTypes.map((t) => (
                         <option key={t} value={t}>
                           {t}
                         </option>
@@ -274,6 +278,7 @@ function DetailInner({ id }: { id: string }) {
                   />
                 )}
               </Field>
+              {isSecurityPush ? <p className="text-xs leading-relaxed text-amber-700">Este V5L usa A&amp;C Security PUSH. Las altas, bajas e importación de usuarios permanecen bloqueadas hasta validar su intercambio real de querydata/devicecmd.</p> : null}
             </div>
           </div>
         </Card>

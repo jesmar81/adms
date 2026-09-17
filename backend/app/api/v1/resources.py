@@ -161,7 +161,9 @@ async def create_device_user(
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Device user with this PIN already exists")
-    from app.adms.commands import CommandBuilder
+    from app.adms.commands import CommandBuilder, require_validated_user_command_profile
+
+    require_validated_user_command_profile(device, CommandType.UPDATE_USERINFO)
 
     ctype, wire = CommandBuilder.update_userinfo(
         pin=payload.pin, name=payload.name, privilege=payload.privilege, card=payload.card
@@ -234,7 +236,9 @@ async def update_device_user(
         row.enabled = payload.enabled
         changes["enabled"] = payload.enabled
     if name != row.name or privilege != row.privilege or card != (row.card_number or ""):
-        from app.adms.commands import CommandBuilder
+        from app.adms.commands import CommandBuilder, require_validated_user_command_profile
+
+        require_validated_user_command_profile(device, CommandType.UPDATE_USERINFO)
 
         ctype, wire = CommandBuilder.update_userinfo(
             pin=row.pin, name=name, privilege=privilege, card=card
@@ -285,7 +289,9 @@ async def delete_device_user(
     device = await session.get(Device, row.device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    from app.adms.commands import CommandBuilder
+    from app.adms.commands import CommandBuilder, require_validated_user_command_profile
+
+    require_validated_user_command_profile(device, CommandType.DELETE_USERINFO)
 
     ctype, wire = CommandBuilder.delete_userinfo(pin=row.pin)
     row.sync_state = "pending"

@@ -101,6 +101,7 @@ async def _store_payload(
     request: Request,
     body: bytes,
     data_type: str | None = None,
+    redact_body: bool = False,
 ) -> AdmsPayload:
     raw_text = body.decode("utf-8", errors="replace")
     payload = AdmsPayload(
@@ -110,7 +111,10 @@ async def _store_payload(
         content_type=request.headers.get("content-type"),
         headers=dict(request.headers),
         query_params=dict(request.query_params),
-        raw_body=_redact_secrets(raw_text) or None,
+        # Never retain biometric templates, face photos or similar binary data
+        # received unexpectedly through Security PUSH querydata.  Its hash is
+        # still retained for an auditable integrity trail.
+        raw_body=None if redact_body else (_redact_secrets(raw_text) or None),
         body_hash=hashlib.sha256(body).hexdigest(),
         received_at=_utcnow(),
         processing_status="received",
@@ -392,6 +396,102 @@ async def _handle_info_or_commands(
             session, device_id=device.id, event_type="device_info_received", payload=info
         )
     return await _drain_wire(session, device)
+
+
+# ---------------------------------------------------------------------------
+# /iclock/querydata — asynchronous results from Security PUSH queries
+# ---------------------------------------------------------------------------
+
+
+def _querydata_is_biometric(request: Request) -> bool:
+    values = " ".join(
+        request.query_params.get(key, "")
+        for key in ("type", "table", "tablename", "data_type")
+    ).lower()
+    return "bio" in values or "photo" in values or "face" in values
+
+
+@router.api_route("/querydata", methods=["GET", "POST"])
+async def handle_querydata(
+    request: Request, session: AsyncSession = Depends(get_db)
+) -> PlainTextResponse:
+    """Receive Security PUSH query results without ever retaining biometrics.
+
+    The V5L initiates this callback asynchronously after a server-side query.
+    User rows are normalized through the same idempotent device-user sync as
+    legacy USERINFO. Unknown tables are retained as evidence only, never
+    interpreted as user or attendance data.
+    """
+    sn = _sn_or_error(request)
+    if isinstance(sn, PlainTextResponse):
+        return sn
+    if not await check_adms_limit(request, serial=sn, endpoint="querydata"):
+        return PlainTextResponse("Rate limit exceeded", status_code=429)
+    body = await request.body()
+    if _body_too_large(request, body):
+        return PlainTextResponse("Request body too large", status_code=413)
+    device = await _require_device(session, serial=sn)
+    if isinstance(device, PlainTextResponse):
+        await session.rollback()
+        return device
+
+    query_type = (
+        request.query_params.get("type")
+        or request.query_params.get("table")
+        or request.query_params.get("tablename")
+        or "unknown"
+    ).lower()
+    biometric = _querydata_is_biometric(request)
+    try:
+        payload = await _store_payload(
+            session,
+            device=device,
+            endpoint="querydata",
+            request=request,
+            body=body,
+            data_type=f"QUERYDATA:{query_type[:40]}",
+            redact_body=biometric,
+        )
+        imported = 0
+        if biometric:
+            payload.processing_status = "quarantined"
+            payload.error_message = "Biometric querydata body redacted by policy"
+            await event_svc.emit(
+                session,
+                device_id=device.id,
+                event_type="biometric_querydata_rejected",
+                payload={"query_type": query_type, "payload_id": str(payload.id)},
+                severity="warning",
+            )
+        elif query_type in {"user", "users", "userinfo"}:
+            users, stats = adms_parser.parse_userinfo(
+                body.decode("utf-8", errors="replace"), device.serial_number
+            )
+            imported = await device_user_svc.sync_from_device(session, device=device, users=users)
+            payload.processing_status = "processed" if not stats.skipped else "partial"
+            if stats.skipped:
+                payload.error_message = f"skipped {stats.skipped}/{stats.total} malformed user rows"
+        else:
+            payload.processing_status = "received"
+        payload.processed_at = _utcnow()
+        await event_svc.emit(
+            session,
+            device_id=device.id,
+            event_type="querydata_received",
+            payload={
+                "query_type": query_type,
+                "imported_users": imported,
+                "biometric_redacted": biometric,
+                "command_id": request.query_params.get("cmdid"),
+            },
+            severity="warning" if biometric else "info",
+        )
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        log.error("querydata_error", serial=sn, error=str(exc))
+        return PlainTextResponse("ERROR", status_code=500)
+    return PlainTextResponse(wire_ok(), status_code=200)
 
 
 # ---------------------------------------------------------------------------

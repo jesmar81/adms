@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adms.commands import CommandType, build_command
+from app.adms.commands import CommandType, build_command, require_validated_user_command_profile
 from app.api.v1 import deps
 from app.api.v1.schemas import CommandIn, CommandOut, DeviceOut, DevicePatch
 from app.core.database import get_db
@@ -189,6 +189,7 @@ async def queue_command(
         ctype, wire = build_command(payload.command_type, payload.params)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    require_validated_user_command_profile(device, ctype)
     row = await command_svc.queue_command(
         session,
         serial=device.serial_number,

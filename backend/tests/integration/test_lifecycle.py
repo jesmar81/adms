@@ -110,6 +110,20 @@ async def test_create_confirm_lifecycle(life_client) -> None:  # type: ignore[no
     assert any(e["type"] == "user_sync_confirmed" for e in events)
 
 
+async def test_acc_security_push_blocks_unvalidated_legacy_user_wire(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "ACCLOCK1")
+    # Registration records the actual Security PUSH device type; legacy
+    # USERINFO writes are intentionally unavailable until a V5L wire capture
+    # proves its command/querydata dialect.
+    await life_client.post("/iclock/registry?SN=ACCLOCK1", content="DeviceType=acc")
+    response = await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "3100", "name": "Laboratorio", "privilege": 0, "card": ""},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "DEVICE_PROTOCOL_EVIDENCE_REQUIRED"
+
+
 async def test_failed_confirm_marks_failed(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(settings, "zkteco_command_max_attempts", 1)
     device_id = await _device_id(life_client, "LIFE002")
