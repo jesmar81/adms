@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0007_one_current_schedule_per_employment"
+revision = "0007_one_current_schedule"
 down_revision = "0006_hr_employment_confidential"
 branch_labels = None
 depends_on = None
