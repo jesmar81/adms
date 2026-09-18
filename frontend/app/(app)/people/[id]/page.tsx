@@ -1,8 +1,9 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- authenticated image Blob URLs cannot use Next optimization */
 
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Banknote, CalendarDays, Clock3, Pencil, Plus, Save, ShieldCheck, UserRound, X } from "lucide-react";
+import { ArrowLeft, Banknote, CalendarDays, Camera, Clock3, Pencil, Plus, Save, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -72,6 +73,7 @@ function PersonDetail({ id }: { id: string }) {
   const [dateTo, setDateTo] = useState(isoDate(today));
   const [sensitive, setSensitive] = useState<Record<string, string>>({});
   const [sensitiveOpen, setSensitiveOpen] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
@@ -100,6 +102,7 @@ function PersonDetail({ id }: { id: string }) {
         api.employments({ person_id: id }),
         api.companies(),
         api.personAttendance(id, { date_from: new Date(dateFrom + "T00:00:00").toISOString(), date_to: new Date(dateTo + "T23:59:59").toISOString() }),
+        api.personPhoto(id),
       ]);
       const loadedPerson = loaded[0];
       const loadedEmployments = loaded[1];
@@ -114,6 +117,7 @@ function PersonDetail({ id }: { id: string }) {
       setAssignments(Object.fromEntries(loadedEmployments.map((item, index) => [item.id, assignmentLists[index]])));
       setMarks(loaded[3].items);
       setNextCursor(loaded[3].next_cursor);
+      setPhotoUrl(loaded[4] ? URL.createObjectURL(loaded[4]) : null);
     } catch (err) {
       setError(err);
     } finally {
@@ -122,6 +126,8 @@ function PersonDetail({ id }: { id: string }) {
   }, [dateFrom, dateTo, id]);
 
   useEffect(() => void load(), [load]);
+
+  useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -155,6 +161,38 @@ function PersonDetail({ id }: { id: string }) {
       setSensitiveOpen(true);
     } catch (err) {
       setError(err);
+    }
+  }
+
+  async function updatePhoto(file: File | undefined) {
+    if (!file || saving) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
+      setError(new Error("La fotografía debe ser JPG, PNG o WebP y pesar máximo 5 MB."));
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.uploadPersonPhoto(id, file);
+      setPhotoUrl(URL.createObjectURL(file));
+      notify("Fotografía actualizada", { tone: "success" });
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removePhoto() {
+    if (!photoUrl || saving || !window.confirm("¿Quitar la fotografía del trabajador?")) return;
+    setSaving(true);
+    try {
+      await api.deletePersonPhoto(id);
+      setPhotoUrl(null);
+      notify("Fotografía eliminada", { tone: "success" });
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -264,11 +302,11 @@ function PersonDetail({ id }: { id: string }) {
   const selectedSchedules = schedules.filter((item) => item.company_id === companyId);
   return (
     <>
-      <PageHeader title={fullName} description="Expediente personal, empleos, horarios y checadas del reloj." crumbs={[{ label: "Personas", href: "/people" }, { label: "Expediente" }]} actions={<Link href="/people"><Button variant="secondary" icon={<ArrowLeft className="h-4 w-4" />}>Volver</Button></Link>} />
+      <PageHeader title={fullName} description="Expediente del trabajador, empleos, horarios y checadas del reloj." crumbs={[{ label: "Trabajadores", href: "/people" }, { label: "Expediente" }]} actions={<Link href="/people"><Button variant="secondary" icon={<ArrowLeft className="h-4 w-4" />}>Volver</Button></Link>} />
       {error ? <div className="mb-4"><ErrorState error={error} onRetry={() => void load()} /></div> : null}
       {loading ? <LoadingState rows={8} /> : <>
         <div className="grid gap-5 xl:grid-cols-2">
-          <Card className="p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><UserRound className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Datos personales y domicilio</p><p className="text-sm text-zinc-500">Comunes a todos los empleos del grupo.</p></div></div><div className="mt-5 grid gap-3 sm:grid-cols-2">{PROFILE_FIELDS.map(([key, label, type]) => <Field key={key} label={label}>{(fieldId) => { const options = PROFILE_SELECT_OPTIONS[key]; return options ? <Select id={fieldId} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))}><option value="">Selecciona</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</Select> : <Input id={fieldId} type={type} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} />; }}</Field>)}</div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Field label="Contacto de emergencia">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_name: event.target.value }))} />}</Field><Field label="Teléfono emergencia">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_phone ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_phone: event.target.value }))} />}</Field><Field label="Parentesco">{(fieldId) => <Select id={fieldId} value={draft.emergency_contact_relationship ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_relationship: event.target.value }))}><option value="">Selecciona</option>{EMERGENCY_RELATIONSHIPS.map((relationship) => <option key={relationship} value={relationship}>{relationship}</option>)}</Select>}</Field></div><Button className="mt-5" variant="primary" icon={<Save className="h-4 w-4" />} onClick={() => void saveProfile()} loading={saving}>Guardar expediente</Button></Card>
+          <Card className="p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><UserRound className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Datos personales y domicilio</p><p className="text-sm text-zinc-500">Comunes a todos los empleos del grupo.</p></div></div><div className="mt-5 flex items-center gap-4 rounded-xl bg-zinc-50 p-3"><div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-zinc-200">{photoUrl ? <img src={photoUrl} alt="Fotografía del trabajador" className="h-full w-full object-cover" /> : <UserRound className="h-8 w-8 text-zinc-400" />}</div><div className="min-w-0 flex-1"><Field label="Fotografía">{(fieldId) => <Input id={fieldId} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void updatePhoto(event.target.files?.[0])} disabled={saving} />}</Field></div>{photoUrl ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} className="w-10 !px-0" aria-label="Eliminar fotografía" title="Eliminar fotografía" onClick={() => void removePhoto()} disabled={saving} /> : <Camera className="h-5 w-5 shrink-0 text-zinc-400" />}</div><div className="mt-5 grid gap-3 sm:grid-cols-2">{PROFILE_FIELDS.map(([key, label, type]) => <Field key={key} label={label}>{(fieldId) => { const options = PROFILE_SELECT_OPTIONS[key]; return options ? <Select id={fieldId} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))}><option value="">Selecciona</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</Select> : <Input id={fieldId} type={type} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} />; }}</Field>)}</div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Field label="Contacto de emergencia">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_name: event.target.value }))} />}</Field><Field label="Teléfono emergencia">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_phone ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_phone: event.target.value }))} />}</Field><Field label="Parentesco">{(fieldId) => <Select id={fieldId} value={draft.emergency_contact_relationship ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_relationship: event.target.value }))}><option value="">Selecciona</option>{EMERGENCY_RELATIONSHIPS.map((relationship) => <option key={relationship} value={relationship}>{relationship}</option>)}</Select>}</Field></div><Button className="mt-5" variant="primary" icon={<Save className="h-4 w-4" />} onClick={() => void saveProfile()} loading={saving}>Guardar expediente</Button></Card>
           <div className="flex flex-col gap-5">
             <Card className="p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><div className="rounded-xl bg-amber-50 p-2.5 text-amber-700"><ShieldCheck className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Datos fiscales y seguridad social</p><p className="text-sm text-zinc-500">CURP, RFC, NSS y datos CFDI se cifran antes de almacenarse.</p></div></div>{!sensitiveOpen ? <Button variant="secondary" icon={<Pencil className="h-4 w-4" />} className="w-10 !px-0" aria-label="Editar datos protegidos" title="Editar datos protegidos" onClick={() => void openSensitive()} /> : null}</div>{sensitiveOpen ? <div className="mt-5 grid gap-3 sm:grid-cols-3">{[["curp", "CURP"], ["rfc", "RFC"], ["nss", "NSS / IMSS"], ["fiscal_name", "Nombre fiscal"], ["tax_regime", "Régimen fiscal"], ["fiscal_postal_code", "CP fiscal"]].map(([key, label]) => <Field key={key} label={label}>{(fieldId) => <Input id={fieldId} value={sensitive[key] ?? ""} onChange={(event) => setSensitive((current) => ({ ...current, [key]: event.target.value.toUpperCase() }))} />}</Field>)}<div className="sm:col-span-3"><Button variant="primary" icon={<Save className="h-4 w-4" />} className="w-10 !px-0" aria-label="Guardar datos protegidos" title="Guardar datos protegidos" onClick={() => void saveSensitive()} loading={saving} /></div></div> : null}</Card>
             <Card className="p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><CalendarDays className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Empleos y horarios</p><p className="text-sm text-zinc-500">Cada empleo mantiene su propio horario.</p></div></div><div className="mt-5 grid gap-3">{employments.length ? employments.map((employment) => { const assignment = assignments[employment.id]?.find((item) => item.active && !item.effective_to); const schedule = schedules.find((item) => item.id === assignment?.work_schedule_id); return <div key={employment.id} className="flex items-start justify-between gap-3 rounded-xl border border-line-subtle bg-zinc-50/60 px-4 py-3"><div><p className="font-medium">{employment.employee_number}</p><p className="mt-1 text-sm text-zinc-600">{[employment.position, employment.department].filter(Boolean).join(" · ") || "Puesto pendiente"}</p><p className="mt-1 text-xs text-zinc-500">{employment.employment_relation_type ?? "Relación pendiente"} · {employment.work_location ?? "Lugar pendiente"}</p><p className="mt-2 text-xs text-zinc-500">Horario: {schedule ? schedule.name : "Sin horario asignado"}</p></div><Button size="sm" variant="ghost" icon={<Banknote className="h-4 w-4" />} className="w-8 !px-0" aria-label="Editar nómina e IMSS" title="Editar nómina e IMSS" onClick={() => void openCompensation(employment)} /></div>; }) : <p className="text-sm text-zinc-500">Aún no hay empleos asignados.</p>}</div></Card>

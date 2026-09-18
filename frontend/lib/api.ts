@@ -15,6 +15,7 @@ import type {
   Holiday,
   Me,
   Person,
+  PersonPhoto,
   PersonAttendancePage,
   PersonSensitiveIdentifiers,
   ScheduleAssignment,
@@ -66,10 +67,11 @@ class ApiClient {
   }
 
   private async raw(path: string, token: string | null, init?: RequestInit): Promise<Response> {
+    const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
     return fetch(`${API}${path}`, {
       ...init,
       headers: {
-        "Content-Type": "application/json",
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(init?.headers ?? {}),
       },
@@ -237,6 +239,26 @@ class ApiClient {
 
   personSensitive(personId: string): Promise<PersonSensitiveIdentifiers> {
     return this.request(`/api/v1/people/${personId}/sensitive`);
+  }
+
+  async personPhoto(personId: string): Promise<Blob | null> {
+    let res = await this.raw(`/api/v1/people/${personId}/photo`, this.tokens?.access ?? null);
+    if (res.status === 401 && this.tokens && await this.refreshOnce()) {
+      res = await this.raw(`/api/v1/people/${personId}/photo`, this.tokens?.access ?? null);
+    }
+    if (res.status === 404) return null;
+    if (!res.ok) await this.parseError(res);
+    return res.blob();
+  }
+
+  uploadPersonPhoto(personId: string, photo: File): Promise<PersonPhoto> {
+    const body = new FormData();
+    body.append("photo", photo);
+    return this.request(`/api/v1/people/${personId}/photo`, { method: "PUT", body });
+  }
+
+  deletePersonPhoto(personId: string): Promise<void> {
+    return this.request(`/api/v1/people/${personId}/photo`, { method: "DELETE" });
   }
 
   updatePersonSensitive(personId: string, body: Record<string, unknown>): Promise<PersonSensitiveIdentifiers> {

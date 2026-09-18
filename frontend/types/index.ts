@@ -122,6 +122,12 @@ export interface PersonSensitiveIdentifiers {
   fiscal_postal_code: string | null;
 }
 
+export interface PersonPhoto {
+  content_type: string;
+  size_bytes: number;
+  updated_at: string;
+}
+
 export interface Employment {
   id: string;
   person_id: string;

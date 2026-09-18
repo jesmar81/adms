@@ -227,6 +227,14 @@ class PersonSensitiveIdentifiersOut(BaseModel):
     fiscal_postal_code: str | None = None
 
 
+class PersonPhotoOut(BaseModel):
+    content_type: str
+    size_bytes: int
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class EmploymentIn(BaseModel):
     company_id: uuid.UUID
     site_id: uuid.UUID | None = None

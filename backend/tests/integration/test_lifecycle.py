@@ -147,6 +147,21 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         )
     ).json()
     assert person["nationality"] == "Mexicana"
+    photo_bytes = b"\x89PNG\r\n\x1a\nworker-profile-photo"
+    uploaded_photo = await life_client.put(
+        f"/api/v1/people/{person['id']}/photo",
+        files={"photo": ("worker.png", photo_bytes, "image/png")},
+    )
+    assert uploaded_photo.status_code == 200
+    assert uploaded_photo.json()["content_type"] == "image/png"
+    fetched_photo = await life_client.get(f"/api/v1/people/{person['id']}/photo")
+    assert fetched_photo.status_code == 200
+    assert fetched_photo.content == photo_bytes
+    invalid_photo = await life_client.put(
+        f"/api/v1/people/{person['id']}/photo",
+        files={"photo": ("worker.svg", b"<svg />", "image/svg+xml")},
+    )
+    assert invalid_photo.status_code == 422
     invalid_profile = await life_client.patch(
         f"/api/v1/people/{person['id']}",
         json={"nationality": "Otra", "birth_state": "Distrito Federal"},

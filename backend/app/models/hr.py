@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -138,6 +139,26 @@ class PersonSensitiveIdentifier(Base, UUIDPKMixin, TimestampMixin):
         Index("ix_person_sensitive_identifiers_rfc_hash", "rfc_hash"),
         Index("ix_person_sensitive_identifiers_nss_hash", "nss_hash"),
     )
+
+
+class PersonPhoto(Base, UUIDPKMixin, TimestampMixin):
+    """One consented profile photograph, stored with the worker record.
+
+    This is an HR profile image, never a device biometric template or face
+    recognition payload. Access is protected by the people permission scope.
+    """
+
+    __tablename__ = "person_photos"
+
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("people.id", ondelete="CASCADE"), nullable=False
+    )
+    image_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (UniqueConstraint("person_id", name="uq_person_photos_person"),)
 
 
 class Employment(Base, UUIDPKMixin, TimestampMixin):

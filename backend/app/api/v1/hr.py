@@ -5,10 +5,12 @@ from __future__ import annotations
 import uuid
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import UTC, date, datetime, timedelta
+from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +35,7 @@ from app.api.v1.schemas import (
     PersonIn,
     PersonOut,
     PersonPatch,
+    PersonPhotoOut,
     PersonSensitiveIdentifiersIn,
     PersonSensitiveIdentifiersOut,
     ScheduleAssignmentIn,
@@ -55,6 +58,7 @@ from app.models.hr import (
     EnrollmentRequest,
     Holiday,
     Person,
+    PersonPhoto,
     PersonSensitiveIdentifier,
     ScheduleAssignment,
     ScheduleSlot,
@@ -193,6 +197,22 @@ async def create_site(
 
 people_router = APIRouter(prefix="/people", tags=["people"])
 
+MAX_PERSON_PHOTO_BYTES = 5 * 1024 * 1024
+PERSON_PHOTO_TYPES = {
+    "image/jpeg": b"\xff\xd8\xff",
+    "image/png": b"\x89PNG\r\n\x1a\n",
+}
+
+
+def _photo_content_type(data: bytes, claimed_type: str | None) -> str:
+    """Accept only browser-safe raster formats and verify their signatures."""
+
+    if claimed_type in PERSON_PHOTO_TYPES and data.startswith(PERSON_PHOTO_TYPES[claimed_type]):
+        return claimed_type
+    if claimed_type == "image/webp" and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return claimed_type
+    raise HTTPException(status_code=422, detail="Photo must be a PNG, JPEG, or WebP image")
+
 
 def _attendance_cursor(row: AttendanceLog) -> str:
     payload = dumps({"recorded_at": row.recorded_at.isoformat(), "id": str(row.id)})
@@ -277,6 +297,75 @@ async def update_person(
     await _audit(session, user, "person.update", "person", row.id, rid)
     await session.commit()
     return row
+
+
+@people_router.get("/{person_id}/photo")
+async def get_person_photo(
+    person_id: uuid.UUID,
+    _user: User = Depends(deps.require_permission("people.read")),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    row = await session.scalar(select(PersonPhoto).where(PersonPhoto.person_id == person_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Worker photo not found")
+    return Response(
+        content=row.image_data,
+        media_type=row.content_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": 'inline; filename="worker-photo"',
+        },
+    )
+
+
+@people_router.put("/{person_id}/photo", response_model=PersonPhotoOut)
+async def update_person_photo(
+    person_id: uuid.UUID,
+    photo: UploadFile = File(...),
+    user: User = Depends(deps.require_permission("people.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> PersonPhoto:
+    if await session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    if photo.size is not None and photo.size > MAX_PERSON_PHOTO_BYTES:
+        raise HTTPException(status_code=413, detail="Photo must not exceed 5 MB")
+    image_data = await photo.read(MAX_PERSON_PHOTO_BYTES + 1)
+    if not image_data:
+        raise HTTPException(status_code=422, detail="Photo is empty")
+    if len(image_data) > MAX_PERSON_PHOTO_BYTES:
+        raise HTTPException(status_code=413, detail="Photo must not exceed 5 MB")
+    content_type = _photo_content_type(image_data, photo.content_type)
+    row = await session.scalar(select(PersonPhoto).where(PersonPhoto.person_id == person_id))
+    if row is None:
+        row = PersonPhoto(person_id=person_id, image_data=image_data, content_type=content_type,
+                          size_bytes=len(image_data), sha256=sha256(image_data).hexdigest())
+        session.add(row)
+    else:
+        row.image_data = image_data
+        row.content_type = content_type
+        row.size_bytes = len(image_data)
+        row.sha256 = sha256(image_data).hexdigest()
+    await session.flush()
+    await _audit(session, user, "person.photo.update", "person", person_id, rid)
+    await session.commit()
+    return row
+
+
+@people_router.delete("/{person_id}/photo", status_code=204)
+async def delete_person_photo(
+    person_id: uuid.UUID,
+    user: User = Depends(deps.require_permission("people.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> None:
+    row = await session.scalar(select(PersonPhoto).where(PersonPhoto.person_id == person_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Worker photo not found")
+    await session.delete(row)
+    await session.flush()
+    await _audit(session, user, "person.photo.delete", "person", person_id, rid)
+    await session.commit()
 
 
 def _pii_unavailable(exc: PiiEncryptionUnavailableError) -> HTTPException:
