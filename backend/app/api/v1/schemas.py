@@ -110,6 +110,35 @@ class CorporateGroupOut(CorporateGroupIn):
     model_config = {"from_attributes": True}
 
 
+class BusinessAddress(BaseModel):
+    """One Mexican address, reusable by a company or a branch."""
+
+    street: str | None = Field(default=None, max_length=150)
+    exterior_number: str | None = Field(default=None, max_length=20)
+    interior_number: str | None = Field(default=None, max_length=20)
+    neighborhood: str | None = Field(default=None, max_length=100)
+    municipality: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, min_length=5, max_length=5, pattern=r"^\d{5}$")
+    country: str = Field(default="México", max_length=80)
+    reference_notes: str | None = Field(default=None, max_length=250)
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("state")
+    @classmethod
+    def validate_state(cls, value: str | None) -> str | None:
+        if value is not None and value not in MEXICAN_STATES:
+            raise ValueError("must be one of Mexico's 32 federal entities")
+        return value
+
+
+class BusinessAddressOut(BusinessAddress):
+    id: uuid.UUID
+
+    model_config = {"from_attributes": True}
+
+
 class CompanyIn(BaseModel):
     corporate_group_id: uuid.UUID
     legal_name: str = Field(min_length=1, max_length=255)
@@ -117,10 +146,12 @@ class CompanyIn(BaseModel):
     tax_id: str | None = Field(default=None, max_length=13)
     employer_registration: str | None = Field(default=None, max_length=32)
     timezone: str = Field(default="America/Mexico_City", max_length=64)
+    address: BusinessAddress | None = None
 
 
 class CompanyOut(CompanyIn):
     id: uuid.UUID
+    address: BusinessAddressOut | None = None
     active: bool
 
     model_config = {"from_attributes": True}
@@ -132,6 +163,7 @@ class CompanyPatch(BaseModel):
     tax_id: str | None = Field(default=None, max_length=13)
     employer_registration: str | None = Field(default=None, max_length=32)
     timezone: str | None = Field(default=None, max_length=64)
+    address: BusinessAddress | None = None
     active: bool | None = None
 
 
@@ -140,11 +172,12 @@ class SiteIn(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     code: str = Field(min_length=1, max_length=50)
     timezone: str = Field(default="America/Mexico_City", max_length=64)
-    address: str | None = None
+    address: BusinessAddress | None = None
 
 
 class SiteOut(SiteIn):
     id: uuid.UUID
+    address: BusinessAddressOut | None = None
     active: bool
 
     model_config = {"from_attributes": True}
@@ -154,7 +187,7 @@ class SitePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=150)
     code: str | None = Field(default=None, min_length=1, max_length=50)
     timezone: str | None = Field(default=None, max_length=64)
-    address: str | None = None
+    address: BusinessAddress | None = None
     active: bool | None = None
 
 

@@ -16,10 +16,12 @@ from fastapi.responses import Response
 from redis.exceptions import RedisError
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.v1 import deps
 from app.api.v1.schemas import (
     AttendanceOut,
+    BusinessAddress,
     CompanyIn,
     CompanyOut,
     CompanyPatch,
@@ -59,6 +61,7 @@ from app.core.database import get_db
 from app.core.redis import get_redis
 from app.models.device import AttendanceLog, Device, DeviceUser
 from app.models.hr import (
+    Address,
     Company,
     CorporateGroup,
     Employment,
@@ -140,6 +143,24 @@ async def create_group(
 companies_router = APIRouter(prefix="/companies", tags=["companies"])
 
 HARD_DELETE_CAPTCHA_TTL_SECONDS = 300
+_UNSET = object()
+
+
+async def _replace_business_address(
+    owner: Company | Site, payload: BusinessAddress | None
+) -> None:
+    """Replace the single structured address owned by a company or branch."""
+
+    if payload is None:
+        if owner.address is not None:
+            owner.address = None
+        return
+    values = payload.model_dump()
+    if owner.address is None:
+        owner.address = Address(**values)
+        return
+    for key, value in values.items():
+        setattr(owner.address, key, value)
 
 
 async def _require_hard_delete_captcha(
@@ -190,7 +211,7 @@ async def list_companies(
     _user: User = Depends(deps.require_permission("companies.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Company]:
-    query = select(Company).order_by(Company.legal_name)
+    query = select(Company).options(selectinload(Company.address)).order_by(Company.legal_name)
     if not include_inactive:
         query = query.where(Company.active.is_(True))
     if corporate_group_id:
@@ -208,8 +229,10 @@ async def create_company(
     _validate_timezone(payload.timezone)
     if await session.get(CorporateGroup, payload.corporate_group_id) is None:
         raise HTTPException(status_code=404, detail="Corporate group not found")
-    row = Company(**payload.model_dump())
+    values = payload.model_dump(exclude={"address"})
+    row = Company(**values)
     session.add(row)
+    await _replace_business_address(row, payload.address)
     await session.flush()
     await _audit(session, user, "company.create", "company", row.id, rid)
     await session.commit()
@@ -224,14 +247,20 @@ async def update_company(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Company:
-    row = await session.get(Company, company_id)
+    row = await session.scalar(
+        select(Company).options(selectinload(Company.address)).where(Company.id == company_id)
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="Company not found")
     changes = payload.model_dump(exclude_unset=True)
+    address = payload.address if "address" in payload.model_fields_set else _UNSET
+    changes.pop("address", None)
     if "timezone" in changes and changes["timezone"] is not None:
         _validate_timezone(changes["timezone"])
     for key, value in changes.items():
         setattr(row, key, value)
+    if address is not _UNSET:
+        await _replace_business_address(row, address)
     await session.flush()
     await _audit(session, user, "company.update", "company", row.id, rid)
     await session.commit()
@@ -317,7 +346,7 @@ async def list_sites(
     _user: User = Depends(deps.require_permission("sites.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Site]:
-    query = select(Site).order_by(Site.name)
+    query = select(Site).options(selectinload(Site.address)).order_by(Site.name)
     if not include_inactive:
         query = query.where(Site.active.is_(True))
     if company_id:
@@ -338,8 +367,10 @@ async def create_site(
         raise HTTPException(status_code=404, detail="Company not found")
     if not company.active:
         raise HTTPException(status_code=409, detail="Cannot add a branch to a soft-deleted company")
-    row = Site(**payload.model_dump())
+    values = payload.model_dump(exclude={"address"})
+    row = Site(**values)
     session.add(row)
+    await _replace_business_address(row, payload.address)
     await session.flush()
     await _audit(session, user, "site.create", "site", row.id, rid)
     await session.commit()
@@ -354,14 +385,20 @@ async def update_site(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Site:
-    row = await session.get(Site, site_id)
+    row = await session.scalar(
+        select(Site).options(selectinload(Site.address)).where(Site.id == site_id)
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="Branch not found")
     changes = payload.model_dump(exclude_unset=True)
+    address = payload.address if "address" in payload.model_fields_set else _UNSET
+    changes.pop("address", None)
     if "timezone" in changes and changes["timezone"] is not None:
         _validate_timezone(changes["timezone"])
     for key, value in changes.items():
         setattr(row, key, value)
+    if address is not _UNSET:
+        await _replace_business_address(row, address)
     await session.flush()
     await _audit(session, user, "site.update", "site", row.id, rid)
     await session.commit()

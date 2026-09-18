@@ -243,9 +243,22 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
     retired_company = (
         await life_client.post(
             "/api/v1/companies",
-            json={"corporate_group_id": group["id"], "legal_name": "Empresa retirada"},
+            json={
+                "corporate_group_id": group["id"],
+                "legal_name": "Empresa retirada",
+                "employer_registration": "A12-34567-89-0",
+                "address": {
+                    "street": "Avenida Reforma",
+                    "exterior_number": "100",
+                    "municipality": "Cuauhtémoc",
+                    "state": "Ciudad de México",
+                    "postal_code": "06600",
+                },
+            },
         )
     ).json()
+    assert retired_company["employer_registration"] == "A12-34567-89-0"
+    assert retired_company["address"]["postal_code"] == "06600"
     retired_site = (
         await life_client.post(
             "/api/v1/sites",
@@ -253,9 +266,20 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         )
     ).json()
     renamed_site = await life_client.patch(
-        f"/api/v1/sites/{retired_site['id']}", json={"name": "Norte"}
+        f"/api/v1/sites/{retired_site['id']}",
+        json={
+            "name": "Norte",
+            "address": {
+                "street": "Insurgentes Sur",
+                "exterior_number": "200",
+                "municipality": "Benito Juárez",
+                "state": "Ciudad de México",
+                "postal_code": "03100",
+            },
+        },
     )
     assert renamed_site.json()["name"] == "Norte"
+    assert renamed_site.json()["address"]["postal_code"] == "03100"
     company_delete = await life_client.delete(f"/api/v1/companies/{retired_company['id']}")
     assert company_delete.status_code == 409
     site_delete = await life_client.delete(f"/api/v1/sites/{retired_site['id']}")

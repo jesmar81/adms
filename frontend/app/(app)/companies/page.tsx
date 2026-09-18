@@ -11,10 +11,44 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
-import type { Company, CorporateGroup, HardDeleteCaptcha, Site } from "@/types";
+import type { BusinessAddress, Company, CorporateGroup, HardDeleteCaptcha, Site } from "@/types";
 
 type EditTarget = { kind: "company"; row: Company } | { kind: "site"; row: Site };
 type HardTarget = EditTarget;
+type AddressDraft = Record<"street" | "exterior_number" | "interior_number" | "neighborhood" | "municipality" | "state" | "postal_code" | "reference_notes", string>;
+
+const MEXICAN_STATES = ["Aguascalientes", "Baja California", "Baja California Sur", "Campeche", "Chiapas", "Chihuahua", "Ciudad de México", "Coahuila de Zaragoza", "Colima", "Durango", "Estado de México", "Guanajuato", "Guerrero", "Hidalgo", "Jalisco", "Michoacán de Ocampo", "Morelos", "Nayarit", "Nuevo León", "Oaxaca", "Puebla", "Querétaro", "Quintana Roo", "San Luis Potosí", "Sinaloa", "Sonora", "Tabasco", "Tamaulipas", "Tlaxcala", "Veracruz de Ignacio de la Llave", "Yucatán", "Zacatecas"] as const;
+
+function emptyAddress(): AddressDraft {
+  return { street: "", exterior_number: "", interior_number: "", neighborhood: "", municipality: "", state: "", postal_code: "", reference_notes: "" };
+}
+
+function addressDraft(address: BusinessAddress | null): AddressDraft {
+  return address ? { street: address.street ?? "", exterior_number: address.exterior_number ?? "", interior_number: address.interior_number ?? "", neighborhood: address.neighborhood ?? "", municipality: address.municipality ?? "", state: address.state ?? "", postal_code: address.postal_code ?? "", reference_notes: address.reference_notes ?? "" } : emptyAddress();
+}
+
+function addressPayload(address: AddressDraft): Record<string, string | null> | null {
+  if (!Object.values(address).some((value) => value.trim())) return null;
+  return Object.fromEntries(Object.entries(address).map(([key, value]) => [key, value.trim() || null]));
+}
+
+function addressLabel(address: BusinessAddress | null): string | null {
+  if (!address) return null;
+  return [address.street, address.exterior_number, address.neighborhood, address.municipality, address.state, address.postal_code].filter(Boolean).join(", ") || null;
+}
+
+function AddressFields({ value, onChange }: { value: AddressDraft; onChange: (key: keyof AddressDraft, next: string) => void }) {
+  return <div className="grid gap-3 sm:grid-cols-2">
+    <Field label="Calle">{(id) => <Input id={id} value={value.street} onChange={(event) => onChange("street", event.target.value)} />}</Field>
+    <Field label="No. exterior">{(id) => <Input id={id} value={value.exterior_number} onChange={(event) => onChange("exterior_number", event.target.value)} />}</Field>
+    <Field label="No. interior">{(id) => <Input id={id} value={value.interior_number} onChange={(event) => onChange("interior_number", event.target.value)} />}</Field>
+    <Field label="Colonia">{(id) => <Input id={id} value={value.neighborhood} onChange={(event) => onChange("neighborhood", event.target.value)} />}</Field>
+    <Field label="Municipio / alcaldía">{(id) => <Input id={id} value={value.municipality} onChange={(event) => onChange("municipality", event.target.value)} />}</Field>
+    <Field label="Estado">{(id) => <Select id={id} value={value.state} onChange={(event) => onChange("state", event.target.value)}><option value="">Selecciona</option>{MEXICAN_STATES.map((state) => <option key={state}>{state}</option>)}</Select>}</Field>
+    <Field label="Código postal">{(id) => <Input id={id} inputMode="numeric" maxLength={5} value={value.postal_code} onChange={(event) => onChange("postal_code", event.target.value)} />}</Field>
+    <Field label="Referencias">{(id) => <Input id={id} value={value.reference_notes} onChange={(event) => onChange("reference_notes", event.target.value)} />}</Field>
+  </div>;
+}
 
 export default function CompaniesPage() {
   const { user } = useAuth();
@@ -32,12 +66,19 @@ export default function CompaniesPage() {
   const [companyName, setCompanyName] = useState("");
   const [companyTradeName, setCompanyTradeName] = useState("");
   const [rfc, setRfc] = useState("");
+  const [employerRegistration, setEmployerRegistration] = useState("");
+  const [companyAddress, setCompanyAddress] = useState<AddressDraft>(emptyAddress);
   const [siteCompanyId, setSiteCompanyId] = useState("");
   const [siteName, setSiteName] = useState("");
   const [siteCode, setSiteCode] = useState("");
+  const [siteAddress, setSiteAddress] = useState<AddressDraft>(emptyAddress);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const [editName, setEditName] = useState("");
   const [editCode, setEditCode] = useState("");
+  const [editTradeName, setEditTradeName] = useState("");
+  const [editRfc, setEditRfc] = useState("");
+  const [editEmployerRegistration, setEditEmployerRegistration] = useState("");
+  const [editAddress, setEditAddress] = useState<AddressDraft>(emptyAddress);
   const [hardTarget, setHardTarget] = useState<HardTarget | null>(null);
   const [captcha, setCaptcha] = useState<HardDeleteCaptcha | null>(null);
   const [captchaAnswer, setCaptchaAnswer] = useState("");
@@ -78,8 +119,8 @@ export default function CompaniesPage() {
     if (!groupId || !companyName.trim() || saving) return;
     setSaving(true);
     try {
-      await api.createCompany({ corporate_group_id: groupId, legal_name: companyName.trim(), trade_name: companyTradeName.trim() || null, tax_id: rfc.trim() || null, timezone: "America/Mexico_City" });
-      setCompanyName(""); setCompanyTradeName(""); setRfc(""); notify("Empresa creada", { tone: "success" }); await load();
+      await api.createCompany({ corporate_group_id: groupId, legal_name: companyName.trim(), trade_name: companyTradeName.trim() || null, tax_id: rfc.trim() || null, employer_registration: employerRegistration.trim() || null, address: addressPayload(companyAddress), timezone: "America/Mexico_City" });
+      setCompanyName(""); setCompanyTradeName(""); setRfc(""); setEmployerRegistration(""); setCompanyAddress(emptyAddress()); notify("Empresa creada", { tone: "success" }); await load();
     } catch (err) { setError(err); } finally { setSaving(false); }
   }
 
@@ -87,8 +128,8 @@ export default function CompaniesPage() {
     if (!siteCompanyId || !siteName.trim() || !siteCode.trim() || saving) return;
     setSaving(true);
     try {
-      await api.createSite({ company_id: siteCompanyId, name: siteName.trim(), code: siteCode.trim().toUpperCase(), timezone: "America/Mexico_City" });
-      setSiteName(""); setSiteCode(""); notify("Sucursal creada", { tone: "success" }); await load();
+      await api.createSite({ company_id: siteCompanyId, name: siteName.trim(), code: siteCode.trim().toUpperCase(), address: addressPayload(siteAddress), timezone: "America/Mexico_City" });
+      setSiteName(""); setSiteCode(""); setSiteAddress(emptyAddress()); notify("Sucursal creada", { tone: "success" }); await load();
     } catch (err) { setError(err); } finally { setSaving(false); }
   }
 
@@ -96,14 +137,18 @@ export default function CompaniesPage() {
     setEditTarget(target);
     setEditName(target.kind === "company" ? target.row.legal_name : target.row.name);
     setEditCode(target.kind === "site" ? target.row.code : "");
+    setEditTradeName(target.kind === "company" ? target.row.trade_name ?? "" : "");
+    setEditRfc(target.kind === "company" ? target.row.tax_id ?? "" : "");
+    setEditEmployerRegistration(target.kind === "company" ? target.row.employer_registration ?? "" : "");
+    setEditAddress(addressDraft(target.row.address));
   }
 
   async function saveEdit() {
     if (!editTarget || !editName.trim() || saving) return;
     setSaving(true);
     try {
-      if (editTarget.kind === "company") await api.updateCompany(editTarget.row.id, { legal_name: editName.trim() });
-      else await api.updateSite(editTarget.row.id, { name: editName.trim(), code: editCode.trim().toUpperCase() || editTarget.row.code });
+      if (editTarget.kind === "company") await api.updateCompany(editTarget.row.id, { legal_name: editName.trim(), trade_name: editTradeName.trim() || null, tax_id: editRfc.trim() || null, employer_registration: editEmployerRegistration.trim() || null, address: addressPayload(editAddress) });
+      else await api.updateSite(editTarget.row.id, { name: editName.trim(), code: editCode.trim().toUpperCase() || editTarget.row.code, address: addressPayload(editAddress) });
       setEditTarget(null); notify("Registro actualizado", { tone: "success" }); await load();
     } catch (err) { setError(err); } finally { setSaving(false); }
   }
@@ -178,6 +223,7 @@ export default function CompaniesPage() {
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{site.name}</p>
             <p className="text-xs text-zinc-500">{site.code} · {site.active ? "Activa" : "Dada de baja"}</p>
+            {addressLabel(site.address) ? <p className="mt-1 truncate text-xs text-zinc-400">{addressLabel(site.address)}</p> : null}
           </div>
         </div>
         <div className="flex shrink-0 gap-1">{renderActions(target)}</div>
@@ -196,6 +242,8 @@ export default function CompaniesPage() {
             <div>
               <p className="font-semibold text-zinc-900">{company.legal_name}</p>
               <p className="mt-1 text-sm text-zinc-500">{company.trade_name ?? "Sin nombre comercial"} · RFC {company.tax_id ?? "pendiente"}</p>
+              <p className="mt-1 text-xs text-zinc-500">Registro patronal: {company.employer_registration ?? "pendiente"}</p>
+              {addressLabel(company.address) ? <p className="mt-1 text-xs text-zinc-400">{addressLabel(company.address)}</p> : null}
               <p className="mt-1 text-xs text-zinc-400">{company.active ? "Activa" : "Dada de baja"} · {branches.length} sucursal(es)</p>
             </div>
           </div>
@@ -219,15 +267,16 @@ export default function CompaniesPage() {
         <div className="grid gap-5 xl:grid-cols-3">
           <div>
             <p className="font-semibold text-zinc-800">Grupo corporativo</p>
-            {groups.length ? <div className="mt-3"><Field label="Grupo activo">{(id) => <Select id={id} value={groupId} onChange={(event) => setGroupId(event.target.value)}>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</Select>}</Field></div> : <div className="mt-3 grid gap-3"><Field label="Nombre">{(id) => <Input id={id} value={groupName} onChange={(event) => setGroupName(event.target.value)} />}</Field><Field label="Código">{(id) => <Input id={id} value={groupCode} onChange={(event) => setGroupCode(event.target.value.toUpperCase())} />}</Field><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void createGroup()} loading={saving}>Crear grupo</Button></div>}
+            <p className="mt-1 text-sm text-zinc-500">Contenedor de las empresas legales del mismo grupo.</p>
+            {groups.length ? <div className="mt-3"><Field label="Grupo que administras">{(id) => <Select id={id} value={groupId} onChange={(event) => setGroupId(event.target.value)}>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</Select>}</Field></div> : <div className="mt-3 grid gap-3"><Field label="Nombre">{(id) => <Input id={id} value={groupName} onChange={(event) => setGroupName(event.target.value)} />}</Field><Field label="Código">{(id) => <Input id={id} value={groupCode} onChange={(event) => setGroupCode(event.target.value.toUpperCase())} />}</Field><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void createGroup()} loading={saving}>Crear grupo</Button></div>}
           </div>
           <div className="border-t border-line-subtle pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
             <p className="font-semibold text-zinc-800">Nueva empresa</p>
-            <div className="mt-3 grid gap-3"><Field label="Razón social">{(id) => <Input id={id} value={companyName} onChange={(event) => setCompanyName(event.target.value)} disabled={!groupId} />}</Field><Field label="Nombre comercial">{(id) => <Input id={id} value={companyTradeName} onChange={(event) => setCompanyTradeName(event.target.value)} disabled={!groupId} />}</Field><Field label="RFC">{(id) => <Input id={id} value={rfc} onChange={(event) => setRfc(event.target.value.toUpperCase())} disabled={!groupId} />}</Field><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void createCompany()} loading={saving} disabled={!groupId || !companyName.trim()}>Crear empresa</Button></div>
+            <div className="mt-3 grid gap-3"><Field label="Razón social">{(id) => <Input id={id} value={companyName} onChange={(event) => setCompanyName(event.target.value)} disabled={!groupId} />}</Field><Field label="Nombre comercial">{(id) => <Input id={id} value={companyTradeName} onChange={(event) => setCompanyTradeName(event.target.value)} disabled={!groupId} />}</Field><Field label="RFC">{(id) => <Input id={id} value={rfc} onChange={(event) => setRfc(event.target.value.toUpperCase())} disabled={!groupId} />}</Field><Field label="Registro patronal IMSS">{(id) => <Input id={id} value={employerRegistration} onChange={(event) => setEmployerRegistration(event.target.value.toUpperCase())} disabled={!groupId} />}</Field><details className="rounded-xl border border-line-subtle p-3"><summary className="cursor-pointer text-sm font-medium text-zinc-700">Dirección fiscal en México</summary><div className="mt-3"><AddressFields value={companyAddress} onChange={(key, value) => setCompanyAddress((current) => ({ ...current, [key]: value }))} /></div></details><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void createCompany()} loading={saving} disabled={!groupId || !companyName.trim()}>Crear empresa</Button></div>
           </div>
           <div className="border-t border-line-subtle pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
             <p className="font-semibold text-zinc-800">Nueva sucursal</p>
-            <div className="mt-3 grid gap-3"><Field label="Empresa">{(id) => <Select id={id} value={siteCompanyId} onChange={(event) => setSiteCompanyId(event.target.value)} disabled={!activeCompanies.length}><option value="">Selecciona</option>{activeCompanies.map((company) => <option key={company.id} value={company.id}>{company.legal_name}</option>)}</Select>}</Field><Field label="Nombre">{(id) => <Input id={id} value={siteName} onChange={(event) => setSiteName(event.target.value)} disabled={!siteCompanyId} />}</Field><Field label="Código">{(id) => <Input id={id} value={siteCode} onChange={(event) => setSiteCode(event.target.value.toUpperCase())} disabled={!siteCompanyId} />}</Field><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void createSite()} loading={saving} disabled={!siteCompanyId || !siteName.trim() || !siteCode.trim()}>Crear sucursal</Button></div>
+            <div className="mt-3 grid gap-3"><Field label="Empresa">{(id) => <Select id={id} value={siteCompanyId} onChange={(event) => setSiteCompanyId(event.target.value)} disabled={!activeCompanies.length}><option value="">Selecciona</option>{activeCompanies.map((company) => <option key={company.id} value={company.id}>{company.legal_name}</option>)}</Select>}</Field><Field label="Nombre">{(id) => <Input id={id} value={siteName} onChange={(event) => setSiteName(event.target.value)} disabled={!siteCompanyId} />}</Field><Field label="Código">{(id) => <Input id={id} value={siteCode} onChange={(event) => setSiteCode(event.target.value.toUpperCase())} disabled={!siteCompanyId} />}</Field><details className="rounded-xl border border-line-subtle p-3"><summary className="cursor-pointer text-sm font-medium text-zinc-700">Dirección operativa en México</summary><div className="mt-3"><AddressFields value={siteAddress} onChange={(key, value) => setSiteAddress((current) => ({ ...current, [key]: value }))} /></div></details><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void createSite()} loading={saving} disabled={!siteCompanyId || !siteName.trim() || !siteCode.trim()}>Crear sucursal</Button></div>
           </div>
         </div>
       </Card>
@@ -253,6 +302,8 @@ export default function CompaniesPage() {
               {(id) => <Input id={id} value={editCode} onChange={(event) => setEditCode(event.target.value.toUpperCase())} />}
             </Field>
           ) : null}
+          {editTarget?.kind === "company" ? <><Field label="Nombre comercial">{(id) => <Input id={id} value={editTradeName} onChange={(event) => setEditTradeName(event.target.value)} />}</Field><Field label="RFC">{(id) => <Input id={id} value={editRfc} onChange={(event) => setEditRfc(event.target.value.toUpperCase())} />}</Field><Field label="Registro patronal IMSS">{(id) => <Input id={id} value={editEmployerRegistration} onChange={(event) => setEditEmployerRegistration(event.target.value.toUpperCase())} />}</Field></> : null}
+          <div className="border-t border-line-subtle pt-4"><p className="mb-3 text-sm font-medium text-zinc-700">Dirección {editTarget?.kind === "company" ? "fiscal" : "operativa"} en México</p><AddressFields value={editAddress} onChange={(key, value) => setEditAddress((current) => ({ ...current, [key]: value }))} /></div>
         </div>
       </Modal>
       <Modal

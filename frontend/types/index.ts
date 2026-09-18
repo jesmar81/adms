@@ -73,7 +73,20 @@ export interface Company {
   tax_id: string | null;
   employer_registration: string | null;
   timezone: string;
+  address: BusinessAddress | null;
   active: boolean;
+}
+
+export interface BusinessAddress {
+  street: string | null;
+  exterior_number: string | null;
+  interior_number: string | null;
+  neighborhood: string | null;
+  municipality: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string;
+  reference_notes: string | null;
 }
 
 export interface Site {
@@ -82,7 +95,7 @@ export interface Site {
   name: string;
   code: string;
   timezone: string;
-  address: string | null;
+  address: BusinessAddress | null;
   active: boolean;
 }
 

@@ -26,7 +26,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
 from app.models.types import GUID, JSONBVariant
@@ -54,6 +54,12 @@ class Company(Base, UUIDPKMixin, TimestampMixin):
     employer_registration: Mapped[str | None] = mapped_column(String(32), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="America/Mexico_City", nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    address: Mapped["Address | None"] = relationship(
+        back_populates="company",
+        foreign_keys="Address.company_id",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint("corporate_group_id", "legal_name", name="uq_companies_group_legal_name"),
@@ -70,12 +76,56 @@ class Site(Base, UUIDPKMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="America/Mexico_City", nullable=False)
-    address: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    address: Mapped["Address | None"] = relationship(
+        back_populates="site",
+        foreign_keys="Address.site_id",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint("company_id", "code", name="uq_sites_company_code"),
         Index("ix_sites_company", "company_id"),
+    )
+
+
+class Address(Base, UUIDPKMixin, TimestampMixin):
+    """Structured Mexican business address owned by one company or one branch."""
+
+    __tablename__ = "addresses"
+
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
+    )
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("sites.id", ondelete="CASCADE"), nullable=True
+    )
+    street: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    exterior_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    interior_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    neighborhood: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    municipality: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    country: Mapped[str] = mapped_column(String(80), default="México", nullable=False)
+    reference_notes: Mapped[str | None] = mapped_column(String(250), nullable=True)
+
+    company: Mapped[Company | None] = relationship(
+        back_populates="address", foreign_keys=[company_id]
+    )
+    site: Mapped[Site | None] = relationship(back_populates="address", foreign_keys=[site_id])
+
+    __table_args__ = (
+        CheckConstraint(
+            "(company_id IS NOT NULL AND site_id IS NULL) OR "
+            "(company_id IS NULL AND site_id IS NOT NULL)",
+            name="ck_addresses_exactly_one_owner",
+        ),
+        UniqueConstraint("company_id", name="uq_addresses_company"),
+        UniqueConstraint("site_id", name="uq_addresses_site"),
+        Index("ix_addresses_company", "company_id"),
+        Index("ix_addresses_site", "site_id"),
     )
 
 
