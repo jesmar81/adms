@@ -240,6 +240,50 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         json={"company_id": company["id"], "holiday_date": "2026-12-24", "name": "Día interno"},
     )
     assert custom.status_code == 201
+    retired_company = (
+        await life_client.post(
+            "/api/v1/companies",
+            json={"corporate_group_id": group["id"], "legal_name": "Empresa retirada"},
+        )
+    ).json()
+    retired_site = (
+        await life_client.post(
+            "/api/v1/sites",
+            json={"company_id": retired_company["id"], "name": "Sucursal retirada", "code": "RET"},
+        )
+    ).json()
+    renamed_site = await life_client.patch(
+        f"/api/v1/sites/{retired_site['id']}", json={"name": "Norte"}
+    )
+    assert renamed_site.json()["name"] == "Norte"
+    company_delete = await life_client.delete(f"/api/v1/companies/{retired_company['id']}")
+    assert company_delete.status_code == 409
+    site_delete = await life_client.delete(f"/api/v1/sites/{retired_site['id']}")
+    assert site_delete.status_code == 204
+    company_soft_delete = await life_client.delete(f"/api/v1/companies/{retired_company['id']}")
+    assert company_soft_delete.status_code == 204
+    site_challenge = (
+        await life_client.post(f"/api/v1/sites/{retired_site['id']}/hard-delete-captcha")
+    ).json()
+    site_answer = site_challenge["prompt"].split()[3]
+    assert (
+        await life_client.request(
+            "DELETE",
+            f"/api/v1/sites/{retired_site['id']}/hard",
+            json={"captcha_token": site_challenge["token"], "captcha_answer": site_answer},
+        )
+    ).status_code == 204
+    company_challenge = (
+        await life_client.post(f"/api/v1/companies/{retired_company['id']}/hard-delete-captcha")
+    ).json()
+    company_answer = company_challenge["prompt"].split()[3]
+    assert (
+        await life_client.request(
+            "DELETE",
+            f"/api/v1/companies/{retired_company['id']}/hard",
+            json={"captcha_token": company_challenge["token"], "captcha_answer": company_answer},
+        )
+    ).status_code == 204
 
 
 async def test_security_push_capabilities_are_evidence_based(life_client) -> None:  # type: ignore[no-untyped-def]

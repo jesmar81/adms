@@ -86,6 +86,12 @@ export interface Site {
   active: boolean;
 }
 
+export interface HardDeleteCaptcha {
+  token: string;
+  prompt: string;
+  expires_in_seconds: number;
+}
+
 export interface Person {
   id: string;
   corporate_group_id: string;

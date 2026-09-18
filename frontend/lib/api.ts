@@ -13,6 +13,7 @@ import type {
   EmploymentCompensation,
   EnrollmentRequest,
   Holiday,
+  HardDeleteCaptcha,
   Me,
   Person,
   PersonPhoto,
@@ -201,20 +202,52 @@ class ApiClient {
     return this.request("/api/v1/corporate-groups", { method: "POST", body: JSON.stringify(body) });
   }
 
-  companies(groupId?: string): Promise<Company[]> {
-    return this.get("/api/v1/companies", groupId ? { corporate_group_id: groupId } : {});
+  companies(groupId?: string, includeInactive = false): Promise<Company[]> {
+    return this.get("/api/v1/companies", { ...(groupId ? { corporate_group_id: groupId } : {}), ...(includeInactive ? { include_inactive: "true" } : {}) });
   }
 
   createCompany(body: Record<string, unknown>): Promise<Company> {
     return this.request("/api/v1/companies", { method: "POST", body: JSON.stringify(body) });
   }
 
-  sites(companyId?: string): Promise<Site[]> {
-    return this.get("/api/v1/sites", companyId ? { company_id: companyId } : {});
+  updateCompany(id: string, body: Record<string, unknown>): Promise<Company> {
+    return this.request(`/api/v1/companies/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+  }
+
+  deleteCompany(id: string): Promise<void> {
+    return this.request(`/api/v1/companies/${id}`, { method: "DELETE" });
+  }
+
+  companyHardDeleteCaptcha(id: string): Promise<HardDeleteCaptcha> {
+    return this.request(`/api/v1/companies/${id}/hard-delete-captcha`, { method: "POST" });
+  }
+
+  hardDeleteCompany(id: string, body: Record<string, unknown>): Promise<void> {
+    return this.request(`/api/v1/companies/${id}/hard`, { method: "DELETE", body: JSON.stringify(body) });
+  }
+
+  sites(companyId?: string, includeInactive = false): Promise<Site[]> {
+    return this.get("/api/v1/sites", { ...(companyId ? { company_id: companyId } : {}), ...(includeInactive ? { include_inactive: "true" } : {}) });
   }
 
   createSite(body: Record<string, unknown>): Promise<Site> {
     return this.request("/api/v1/sites", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  updateSite(id: string, body: Record<string, unknown>): Promise<Site> {
+    return this.request(`/api/v1/sites/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+  }
+
+  deleteSite(id: string): Promise<void> {
+    return this.request(`/api/v1/sites/${id}`, { method: "DELETE" });
+  }
+
+  siteHardDeleteCaptcha(id: string): Promise<HardDeleteCaptcha> {
+    return this.request(`/api/v1/sites/${id}/hard-delete-captcha`, { method: "POST" });
+  }
+
+  hardDeleteSite(id: string, body: Record<string, unknown>): Promise<void> {
+    return this.request(`/api/v1/sites/${id}/hard`, { method: "DELETE", body: JSON.stringify(body) });
   }
 
   people(corporateGroupId: string): Promise<Person[]> {

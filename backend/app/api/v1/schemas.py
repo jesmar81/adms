@@ -126,6 +126,15 @@ class CompanyOut(CompanyIn):
     model_config = {"from_attributes": True}
 
 
+class CompanyPatch(BaseModel):
+    legal_name: str | None = Field(default=None, min_length=1, max_length=255)
+    trade_name: str | None = Field(default=None, max_length=255)
+    tax_id: str | None = Field(default=None, max_length=13)
+    employer_registration: str | None = Field(default=None, max_length=32)
+    timezone: str | None = Field(default=None, max_length=64)
+    active: bool | None = None
+
+
 class SiteIn(BaseModel):
     company_id: uuid.UUID
     name: str = Field(min_length=1, max_length=150)
@@ -139,6 +148,25 @@ class SiteOut(SiteIn):
     active: bool
 
     model_config = {"from_attributes": True}
+
+
+class SitePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    code: str | None = Field(default=None, min_length=1, max_length=50)
+    timezone: str | None = Field(default=None, max_length=64)
+    address: str | None = None
+    active: bool | None = None
+
+
+class HardDeleteCaptchaOut(BaseModel):
+    token: str
+    prompt: str
+    expires_in_seconds: int
+
+
+class HardDeleteIn(BaseModel):
+    captcha_token: str = Field(min_length=16, max_length=128)
+    captcha_answer: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
 class PersonProfileCatalog(BaseModel):

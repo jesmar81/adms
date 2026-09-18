@@ -6,11 +6,14 @@ import uuid
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
+from hmac import compare_digest
 from json import JSONDecodeError, dumps, loads
+from secrets import randbelow, token_urlsafe
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
+from redis.exceptions import RedisError
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +22,7 @@ from app.api.v1.schemas import (
     AttendanceOut,
     CompanyIn,
     CompanyOut,
+    CompanyPatch,
     CorporateGroupIn,
     CorporateGroupOut,
     EmploymentCompensationIn,
@@ -28,6 +32,8 @@ from app.api.v1.schemas import (
     EnrollmentRequestIn,
     EnrollmentRequestOut,
     EnrollmentRequestStatusIn,
+    HardDeleteCaptchaOut,
+    HardDeleteIn,
     HolidayGenerationOut,
     HolidayIn,
     HolidayOut,
@@ -44,11 +50,13 @@ from app.api.v1.schemas import (
     ScheduleSlotOut,
     SiteIn,
     SiteOut,
+    SitePatch,
     WorkScheduleIn,
     WorkScheduleOut,
     WorkSchedulePatch,
 )
 from app.core.database import get_db
+from app.core.redis import get_redis
 from app.models.device import AttendanceLog, Device, DeviceUser
 from app.models.hr import (
     Company,
@@ -131,14 +139,60 @@ async def create_group(
 
 companies_router = APIRouter(prefix="/companies", tags=["companies"])
 
+HARD_DELETE_CAPTCHA_TTL_SECONDS = 300
+
+
+async def _require_hard_delete_captcha(
+    user: User, resource: str, resource_id: uuid.UUID, payload: HardDeleteIn
+) -> None:
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=403, detail="Only a superuser can permanently delete records"
+        )
+    key = f"hard-delete:{user.id}:{resource}:{resource_id}:{payload.captcha_token}"
+    try:
+        expected = await get_redis().getdel(key)
+    except RedisError as exc:
+        raise HTTPException(
+            status_code=503, detail="Deletion confirmation service unavailable"
+        ) from exc
+    if expected is None or not compare_digest(expected, payload.captcha_answer):
+        raise HTTPException(status_code=422, detail="Deletion CAPTCHA is invalid or expired")
+
+
+async def _new_hard_delete_captcha(
+    user: User, resource: str, resource_id: uuid.UUID
+) -> HardDeleteCaptchaOut:
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=403, detail="Only a superuser can permanently delete records"
+        )
+    token = token_urlsafe(24)
+    answer = f"{randbelow(1_000_000):06d}"
+    key = f"hard-delete:{user.id}:{resource}:{resource_id}:{token}"
+    try:
+        await get_redis().setex(key, HARD_DELETE_CAPTCHA_TTL_SECONDS, answer)
+    except RedisError as exc:
+        raise HTTPException(
+            status_code=503, detail="Deletion confirmation service unavailable"
+        ) from exc
+    return HardDeleteCaptchaOut(
+        token=token,
+        prompt=f"Escribe el código {answer} para confirmar la eliminación definitiva.",
+        expires_in_seconds=HARD_DELETE_CAPTCHA_TTL_SECONDS,
+    )
+
 
 @companies_router.get("", response_model=list[CompanyOut])
 async def list_companies(
     corporate_group_id: uuid.UUID | None = None,
+    include_inactive: bool = False,
     _user: User = Depends(deps.require_permission("companies.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Company]:
     query = select(Company).order_by(Company.legal_name)
+    if not include_inactive:
+        query = query.where(Company.active.is_(True))
     if corporate_group_id:
         query = query.where(Company.corporate_group_id == corporate_group_id)
     return list((await session.execute(query)).scalars())
@@ -162,16 +216,110 @@ async def create_company(
     return row
 
 
+@companies_router.patch("/{company_id}", response_model=CompanyOut)
+async def update_company(
+    company_id: uuid.UUID,
+    payload: CompanyPatch,
+    user: User = Depends(deps.require_permission("companies.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> Company:
+    row = await session.get(Company, company_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    changes = payload.model_dump(exclude_unset=True)
+    if "timezone" in changes and changes["timezone"] is not None:
+        _validate_timezone(changes["timezone"])
+    for key, value in changes.items():
+        setattr(row, key, value)
+    await session.flush()
+    await _audit(session, user, "company.update", "company", row.id, rid)
+    await session.commit()
+    return row
+
+
+@companies_router.delete("/{company_id}", status_code=204)
+async def soft_delete_company(
+    company_id: uuid.UUID,
+    user: User = Depends(deps.require_permission("companies.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> None:
+    row = await session.get(Company, company_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    has_active_branches = await session.scalar(
+        select(Site.id).where(Site.company_id == company_id, Site.active.is_(True))
+    )
+    if has_active_branches:
+        raise HTTPException(
+            status_code=409, detail="Soft-delete every active branch before deleting company"
+        )
+    row.active = False
+    await session.flush()
+    await _audit(session, user, "company.soft_delete", "company", row.id, rid)
+    await session.commit()
+
+
+@companies_router.post("/{company_id}/hard-delete-captcha", response_model=HardDeleteCaptchaOut)
+async def company_hard_delete_captcha(
+    company_id: uuid.UUID,
+    user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> HardDeleteCaptchaOut:
+    row = await session.get(Company, company_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if row.active:
+        raise HTTPException(status_code=409, detail="Soft-delete company before permanent deletion")
+    return await _new_hard_delete_captcha(user, "company", company_id)
+
+
+@companies_router.delete("/{company_id}/hard", status_code=204)
+async def hard_delete_company(
+    company_id: uuid.UUID,
+    payload: HardDeleteIn,
+    user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> None:
+    row = await session.get(Company, company_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if row.active:
+        raise HTTPException(status_code=409, detail="Soft-delete company before permanent deletion")
+    await _require_hard_delete_captcha(user, "company", company_id, payload)
+    if await session.scalar(select(Site.id).where(Site.company_id == company_id)):
+        raise HTTPException(
+            status_code=409, detail="Permanently delete all branches before deleting company"
+        )
+    company_dependencies = (
+        (Employment, "employments"),
+        (WorkSchedule, "work schedules"),
+        (Holiday, "holidays"),
+    )
+    for model, label in company_dependencies:
+        if await session.scalar(select(model.id).where(model.company_id == company_id)):
+            raise HTTPException(status_code=409, detail=f"Company still has {label}")
+    await session.delete(row)
+    await session.flush()
+    await _audit(session, user, "company.hard_delete", "company", company_id, rid)
+    await session.commit()
+
+
 sites_router = APIRouter(prefix="/sites", tags=["sites"])
 
 
 @sites_router.get("", response_model=list[SiteOut])
 async def list_sites(
     company_id: uuid.UUID | None = None,
+    include_inactive: bool = False,
     _user: User = Depends(deps.require_permission("sites.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Site]:
     query = select(Site).order_by(Site.name)
+    if not include_inactive:
+        query = query.where(Site.active.is_(True))
     if company_id:
         query = query.where(Site.company_id == company_id)
     return list((await session.execute(query)).scalars())
@@ -185,14 +333,91 @@ async def create_site(
     rid: str = Depends(deps.request_id),
 ) -> Site:
     _validate_timezone(payload.timezone)
-    if await session.get(Company, payload.company_id) is None:
+    company = await session.get(Company, payload.company_id)
+    if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
+    if not company.active:
+        raise HTTPException(status_code=409, detail="Cannot add a branch to a soft-deleted company")
     row = Site(**payload.model_dump())
     session.add(row)
     await session.flush()
     await _audit(session, user, "site.create", "site", row.id, rid)
     await session.commit()
     return row
+
+
+@sites_router.patch("/{site_id}", response_model=SiteOut)
+async def update_site(
+    site_id: uuid.UUID,
+    payload: SitePatch,
+    user: User = Depends(deps.require_permission("sites.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> Site:
+    row = await session.get(Site, site_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    changes = payload.model_dump(exclude_unset=True)
+    if "timezone" in changes and changes["timezone"] is not None:
+        _validate_timezone(changes["timezone"])
+    for key, value in changes.items():
+        setattr(row, key, value)
+    await session.flush()
+    await _audit(session, user, "site.update", "site", row.id, rid)
+    await session.commit()
+    return row
+
+
+@sites_router.delete("/{site_id}", status_code=204)
+async def soft_delete_site(
+    site_id: uuid.UUID,
+    user: User = Depends(deps.require_permission("sites.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> None:
+    row = await session.get(Site, site_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    row.active = False
+    await session.flush()
+    await _audit(session, user, "site.soft_delete", "site", row.id, rid)
+    await session.commit()
+
+
+@sites_router.post("/{site_id}/hard-delete-captcha", response_model=HardDeleteCaptchaOut)
+async def site_hard_delete_captcha(
+    site_id: uuid.UUID,
+    user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> HardDeleteCaptchaOut:
+    row = await session.get(Site, site_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    if row.active:
+        raise HTTPException(status_code=409, detail="Soft-delete branch before permanent deletion")
+    return await _new_hard_delete_captcha(user, "site", site_id)
+
+
+@sites_router.delete("/{site_id}/hard", status_code=204)
+async def hard_delete_site(
+    site_id: uuid.UUID,
+    payload: HardDeleteIn,
+    user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> None:
+    row = await session.get(Site, site_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    if row.active:
+        raise HTTPException(status_code=409, detail="Soft-delete branch before permanent deletion")
+    await _require_hard_delete_captcha(user, "site", site_id, payload)
+    if await session.scalar(select(Device.id).where(Device.site_id == site_id)):
+        raise HTTPException(status_code=409, detail="Branch still has assigned devices")
+    await session.delete(row)
+    await session.flush()
+    await _audit(session, user, "site.hard_delete", "site", site_id, rid)
+    await session.commit()
 
 
 people_router = APIRouter(prefix="/people", tags=["people"])
