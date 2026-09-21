@@ -1,6 +1,7 @@
 import type {
   AdminUser,
   AbsenceReport,
+  AttendanceAdjustment,
   AttendanceRow,
   AuditEntry,
   Company,
@@ -138,6 +139,15 @@ class ApiClient {
     return (await res.json()) as T;
   }
 
+  private async download(path: string, retry = true): Promise<Blob> {
+    let res = await this.raw(path, this.tokens?.access ?? null);
+    if (res.status === 401 && retry && this.tokens && await this.refreshOnce()) {
+      res = await this.raw(path, this.tokens?.access ?? null);
+    }
+    if (!res.ok) await this.parseError(res);
+    return res.blob();
+  }
+
   // -- auth ---------------------------------------------------------------
   async login(username: string, password: string): Promise<Me> {
     const res = await this.raw(
@@ -212,6 +222,18 @@ class ApiClient {
 
   punctualityReport(params: Record<string, string>): Promise<PunctualityReport[]> {
     return this.get("/api/v1/reports/punctuality", params);
+  }
+
+  attendanceAdjustments(params: Record<string, string>): Promise<AttendanceAdjustment[]> {
+    return this.get("/api/v1/reports/adjustments", params);
+  }
+
+  saveAttendanceAdjustment(employmentId: string, body: Record<string, unknown>): Promise<AttendanceAdjustment> {
+    return this.request(`/api/v1/reports/adjustments/${employmentId}`, { method: "PUT", body: JSON.stringify(body) });
+  }
+
+  weeklyCardsPdf(params: Record<string, string>): Promise<Blob> {
+    return this.download(`/api/v1/reports/weekly-cards.pdf?${new URLSearchParams(params).toString()}`);
   }
 
   corporateGroups(): Promise<CorporateGroup[]> {

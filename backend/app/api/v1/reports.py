@@ -1,19 +1,23 @@
-"""Schedule-aware attendance reports for HR and payroll review."""
+"""Schedule-aware reports, auditable HR adjustments and weekly-card PDFs."""
 
 from __future__ import annotations
 
 import uuid
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import deps
 from app.api.v1.schemas import (
     AbsenceReportOut,
+    AttendanceAdjustmentIn,
+    AttendanceAdjustmentOut,
     DailyArrivalReportOut,
     PunctualityReportOut,
     WeeklyCardDayOut,
@@ -22,15 +26,19 @@ from app.api.v1.schemas import (
 from app.core.database import get_db
 from app.models.device import AttendanceLog, DeviceUser
 from app.models.hr import (
+    Address,
+    AttendanceAdjustment,
     Company,
     Employment,
     Holiday,
     Person,
     ScheduleAssignment,
     ScheduleSlot,
+    Site,
     WorkSchedule,
 )
 from app.models.user import User
+from app.services import audit as audit_svc
 
 reports_router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -41,20 +49,36 @@ def _worker_name(person: Person) -> str:
     )
 
 
-def _local_marks(marks: list[datetime], report_day: date, timezone: tzinfo) -> list[datetime]:
-    return [
-        mark.astimezone(timezone)
-        for mark in marks
-        if mark.astimezone(timezone).date() == report_day
-    ]
+def _local_marks(marks: list[datetime], day: date, timezone: tzinfo) -> list[datetime]:
+    return [mark.astimezone(timezone) for mark in marks if mark.astimezone(timezone).date() == day]
 
 
-async def _report_data(
+def _address(value: Address | None) -> str | None:
+    if value is None:
+        return None
+    street = " ".join(part for part in (value.street, value.exterior_number) if part)
+    if value.interior_number:
+        street = f"{street} Int. {value.interior_number}".strip()
+    values = (
+        street,
+        value.neighborhood,
+        value.municipality,
+        value.state,
+        f"C.P. {value.postal_code}" if value.postal_code else None,
+        value.country,
+    )
+    return ", ".join(part for part in values if part)
+
+
+async def _data(
     session: AsyncSession,
-    start_date: date,
-    end_date: date,
+    start: date,
+    end: date,
+    *,
     company_id: uuid.UUID | None = None,
+    group_id: uuid.UUID | None = None,
     person_id: uuid.UUID | None = None,
+    employment_id: uuid.UUID | None = None,
 ) -> tuple[
     list[tuple[Employment, Person, Company]],
     dict[uuid.UUID, list[ScheduleAssignment]],
@@ -62,156 +86,329 @@ async def _report_data(
     dict[uuid.UUID, list[ScheduleSlot]],
     set[tuple[uuid.UUID, date]],
     dict[uuid.UUID, list[datetime]],
+    dict[tuple[uuid.UUID, date], AttendanceAdjustment],
 ]:
-    worker_query = (
+    query = (
         select(Employment, Person, Company)
         .join(Person, Employment.person_id == Person.id)
         .join(Company, Employment.company_id == Company.id)
         .where(
             Person.active.is_(True),
-            Employment.started_on <= end_date,
-            (Employment.ended_on.is_(None) | (Employment.ended_on >= start_date)),
+            Employment.active.is_(True),
+            Employment.started_on <= end,
+            Employment.ended_on.is_(None) | (Employment.ended_on >= start),
         )
-        .order_by(Person.last_name, Person.first_name, Employment.employee_number)
+        .order_by(
+            Company.legal_name, Person.last_name, Person.first_name, Employment.employee_number
+        )
     )
-    if company_id is not None:
-        worker_query = worker_query.where(Employment.company_id == company_id)
-    if person_id is not None:
-        worker_query = worker_query.where(Employment.person_id == person_id)
-    workers = list((await session.execute(worker_query)).tuples())
-    employment_ids = [employment.id for employment, _, _ in workers]
-    person_ids = list({person.id for _, person, _ in workers})
-    company_ids = list({company.id for _, _, company in workers})
+    if company_id:
+        query = query.where(Employment.company_id == company_id)
+    if group_id:
+        query = query.where(Company.corporate_group_id == group_id)
+    if person_id:
+        query = query.where(Employment.person_id == person_id)
+    if employment_id:
+        query = query.where(Employment.id == employment_id)
+    workers = list((await session.execute(query)).tuples())
+    employment_ids = [item[0].id for item in workers]
     if not employment_ids:
-        return [], {}, {}, {}, set(), {}
-
-    assignments = list(
+        return [], {}, {}, {}, set(), {}, {}
+    person_ids = list({item[1].id for item in workers})
+    company_ids = list({item[2].id for item in workers})
+    assignments_rows = list(
         (
             await session.execute(
                 select(ScheduleAssignment).where(
                     ScheduleAssignment.active.is_(True),
                     ScheduleAssignment.employment_id.in_(employment_ids),
-                    ScheduleAssignment.effective_from <= end_date,
+                    ScheduleAssignment.effective_from <= end,
                     ScheduleAssignment.effective_to.is_(None)
-                    | (ScheduleAssignment.effective_to >= start_date),
+                    | (ScheduleAssignment.effective_to >= start),
                 )
             )
         ).scalars()
     )
-    assignments_by_employment: dict[uuid.UUID, list[ScheduleAssignment]] = defaultdict(list)
-    for assignment in assignments:
-        assignments_by_employment[assignment.employment_id].append(assignment)
-    schedule_ids = list({assignment.work_schedule_id for assignment in assignments})
-    schedules: dict[uuid.UUID, WorkSchedule] = {}
-    slots_by_schedule: dict[uuid.UUID, list[ScheduleSlot]] = defaultdict(list)
-    if schedule_ids:
-        schedules = {
-            row.id: row
-            for row in (
+    assignments: dict[uuid.UUID, list[ScheduleAssignment]] = defaultdict(list)
+    for item in assignments_rows:
+        assignments[item.employment_id].append(item)
+    schedule_ids = list({item.work_schedule_id for item in assignments_rows})
+    schedules = (
+        {
+            item.id: item
+            for item in (
                 await session.execute(select(WorkSchedule).where(WorkSchedule.id.in_(schedule_ids)))
             ).scalars()
         }
-        for slot in (
+        if schedule_ids
+        else {}
+    )
+    slots: dict[uuid.UUID, list[ScheduleSlot]] = defaultdict(list)
+    if schedule_ids:
+        for item in (
             await session.execute(
                 select(ScheduleSlot).where(ScheduleSlot.work_schedule_id.in_(schedule_ids))
             )
         ).scalars():
-            slots_by_schedule[slot.work_schedule_id].append(slot)
+            slots[item.work_schedule_id].append(item)
     holidays = {
-        (row.company_id, row.holiday_date)
-        for row in (
+        (item.company_id, item.holiday_date)
+        for item in (
             await session.execute(
                 select(Holiday).where(
                     Holiday.company_id.in_(company_ids),
-                    Holiday.holiday_date >= start_date,
-                    Holiday.holiday_date <= end_date,
+                    Holiday.holiday_date >= start,
+                    Holiday.holiday_date <= end,
                 )
             )
         ).scalars()
     }
-    mark_start = datetime.combine(start_date, time.min, tzinfo=UTC) - timedelta(hours=14)
-    mark_end = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=UTC) + timedelta(
-        hours=14
-    )
-    marks_by_person: dict[uuid.UUID, list[datetime]] = defaultdict(list)
-    if person_ids:
-        mark_rows = await session.execute(
-            select(AttendanceLog.recorded_at, DeviceUser.person_id)
-            .join(DeviceUser, AttendanceLog.device_user_id == DeviceUser.id)
-            .where(
-                DeviceUser.person_id.in_(person_ids),
-                AttendanceLog.recorded_at >= mark_start,
-                AttendanceLog.recorded_at < mark_end,
+    adjustments = {
+        (item.employment_id, item.attendance_date): item
+        for item in (
+            await session.execute(
+                select(AttendanceAdjustment).where(
+                    AttendanceAdjustment.employment_id.in_(employment_ids),
+                    AttendanceAdjustment.attendance_date >= start,
+                    AttendanceAdjustment.attendance_date <= end,
+                )
             )
-            .order_by(AttendanceLog.recorded_at)
+        ).scalars()
+    }
+    marks: dict[uuid.UUID, list[datetime]] = defaultdict(list)
+    mark_start = datetime.combine(start, time.min, tzinfo=UTC) - timedelta(hours=14)
+    mark_end = datetime.combine(end + timedelta(days=1), time.min, tzinfo=UTC) + timedelta(hours=14)
+    rows = await session.execute(
+        select(AttendanceLog.recorded_at, DeviceUser.person_id)
+        .join(DeviceUser, AttendanceLog.device_user_id == DeviceUser.id)
+        .where(
+            DeviceUser.person_id.in_(person_ids),
+            AttendanceLog.recorded_at >= mark_start,
+            AttendanceLog.recorded_at < mark_end,
         )
-        for recorded_at, mark_person_id in mark_rows.tuples():
-            if mark_person_id is not None:
-                marks_by_person[mark_person_id].append(recorded_at)
-    return (
-        workers,
-        assignments_by_employment,
-        schedules,
-        slots_by_schedule,
-        holidays,
-        marks_by_person,
+        .order_by(AttendanceLog.recorded_at)
+    )
+    for recorded_at, mark_person_id in rows.tuples():
+        if mark_person_id:
+            marks[mark_person_id].append(recorded_at)
+    return workers, assignments, schedules, slots, holidays, marks, adjustments
+
+
+def _assignment(items: list[ScheduleAssignment], day: date) -> ScheduleAssignment | None:
+    return max(
+        (
+            item
+            for item in items
+            if item.effective_from <= day
+            and (item.effective_to is None or item.effective_to >= day)
+        ),
+        key=lambda item: item.effective_from,
+        default=None,
     )
 
 
-def _assignment_for_day(
-    assignments: list[ScheduleAssignment], report_day: date
-) -> ScheduleAssignment | None:
-    eligible = [
-        item
-        for item in assignments
-        if item.effective_from <= report_day
-        and (item.effective_to is None or item.effective_to >= report_day)
-    ]
-    return max(eligible, key=lambda item: item.effective_from, default=None)
-
-
-def _scheduled_bounds(
+def _bounds(
     employment: Employment,
-    report_day: date,
+    day: date,
     assignments: list[ScheduleAssignment],
     schedules: dict[uuid.UUID, WorkSchedule],
-    slots_by_schedule: dict[uuid.UUID, list[ScheduleSlot]],
+    slots: dict[uuid.UUID, list[ScheduleSlot]],
     holidays: set[tuple[uuid.UUID, date]],
 ) -> tuple[datetime, datetime | None, int] | None:
-    if report_day < employment.started_on or (
-        employment.ended_on is not None and report_day > employment.ended_on
+    if (
+        day < employment.started_on
+        or (employment.ended_on and day > employment.ended_on)
+        or (employment.company_id, day) in holidays
     ):
         return None
-    if (employment.company_id, report_day) in holidays:
+    assignment = _assignment(assignments, day)
+    schedule = schedules.get(assignment.work_schedule_id) if assignment else None
+    if not schedule:
         return None
-    assignment = _assignment_for_day(assignments, report_day)
-    if assignment is None:
-        return None
-    schedule = schedules.get(assignment.work_schedule_id)
-    if schedule is None:
-        return None
-    slots = [
-        slot
-        for slot in slots_by_schedule.get(schedule.id, [])
-        if slot.day_of_week == report_day.weekday() and slot.required
+    active = [
+        item
+        for item in slots.get(schedule.id, [])
+        if item.day_of_week == day.weekday() and item.required
     ]
-    entries = [slot for slot in slots if slot.kind == "entry"]
+    entries = [item for item in active if item.kind == "entry"]
     if not entries:
         return None
-    exits = [slot for slot in slots if slot.kind == "exit"]
-    timezone = ZoneInfo(schedule.timezone)
+    exits = [item for item in active if item.kind == "exit"]
+    tz = ZoneInfo(schedule.timezone)
     entry = min(entries, key=lambda item: (item.expected_at, item.sequence))
-    expected_entry = datetime.combine(report_day, entry.expected_at, tzinfo=timezone)
-    expected_exit = (
+    exit_at = (
         datetime.combine(
-            report_day,
+            day,
             max(exits, key=lambda item: (item.expected_at, item.sequence)).expected_at,
-            tzinfo=timezone,
+            tzinfo=tz,
         )
         if exits
         else None
     )
-    return expected_entry, expected_exit, entry.tolerance_minutes
+    return datetime.combine(day, entry.expected_at, tzinfo=tz), exit_at, entry.tolerance_minutes
+
+
+def _raw_events(
+    marks: list[datetime],
+) -> tuple[datetime | None, datetime | None, datetime | None, datetime | None]:
+    if len(marks) == 0:
+        return None, None, None, None
+    if len(marks) == 1:
+        return marks[0], None, None, None
+    if len(marks) == 2:
+        return marks[0], None, None, marks[1]
+    if len(marks) == 3:
+        return marks[0], marks[1], None, marks[2]
+    return marks[0], marks[1], marks[-2], marks[-1]
+
+
+def _events(
+    marks: list[datetime], adjustment: AttendanceAdjustment | None
+) -> tuple[datetime | None, datetime | None, datetime | None, datetime | None]:
+    entry, meal_out, meal_in, exit_at = _raw_events(marks)
+    if adjustment is None:
+        return entry, meal_out, meal_in, exit_at
+    return (
+        adjustment.entry_at or entry,
+        adjustment.meal_out_at or meal_out,
+        adjustment.meal_in_at or meal_in,
+        adjustment.exit_at or exit_at,
+    )
+
+
+def _day(
+    employment: Employment,
+    report_day: date,
+    assignments: list[ScheduleAssignment],
+    schedules: dict[uuid.UUID, WorkSchedule],
+    slots: dict[uuid.UUID, list[ScheduleSlot]],
+    holidays: set[tuple[uuid.UUID, date]],
+    marks: list[datetime],
+    adjustment: AttendanceAdjustment | None,
+) -> WeeklyCardDayOut:
+    expected = _bounds(employment, report_day, assignments, schedules, slots, holidays)
+    entry, meal_out, meal_in, exit_at = _events(marks, adjustment)
+    kwargs = {
+        "report_date": report_day,
+        "entry_at": entry,
+        "meal_out_at": meal_out,
+        "meal_in_at": meal_in,
+        "exit_at": exit_at,
+        "mark_count": len(marks),
+        "adjustment_id": adjustment.id if adjustment else None,
+        "adjustment_reason": adjustment.reason if adjustment else None,
+    }
+    if expected is None:
+        if report_day < employment.started_on or (
+            employment.ended_on and report_day > employment.ended_on
+        ):
+            return WeeklyCardDayOut(day_kind="FUERA DE VIGENCIA", **kwargs)
+        return WeeklyCardDayOut(
+            day_kind="FERIADO" if (employment.company_id, report_day) in holidays else "DESCANSO",
+            **kwargs,
+        )
+    expected_entry, expected_exit, tolerance = expected
+    if adjustment and adjustment.absence_kind:
+        absence_label = "JUSTIFICADA" if adjustment.absence_kind == "justified" else "INJUSTIFICADA"
+        return WeeklyCardDayOut(day_kind=f"FALTA {absence_label}", **kwargs)
+    if entry is None:
+        return WeeklyCardDayOut(day_kind="FALTA INJUSTIFICADA", **kwargs)
+    late = max(0, int((entry - expected_entry).total_seconds() // 60) - tolerance)
+    early = (
+        max(0, int((expected_exit - exit_at).total_seconds() // 60))
+        if expected_exit and exit_at
+        else 0
+    )
+    kind = (
+        "LABORADO CON RETARDO Y SALIDA FUERA DE HORARIO"
+        if late and early
+        else "LABORADO CON RETARDO"
+        if late
+        else "LABORADO CON SALIDA FUERA DE HORARIO"
+        if early
+        else "LABORAL"
+    )
+    return WeeklyCardDayOut(
+        day_kind=kind, late_minutes=late, early_departure_minutes=early, **kwargs
+    )
+
+
+async def _locations(
+    session: AsyncSession, workers: list[tuple[Employment, Person, Company]]
+) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+    site_ids = list({item[0].site_id for item in workers if item[0].site_id})
+    company_ids = list({item[2].id for item in workers})
+    sites = (
+        {
+            item.id: item
+            for item in (await session.execute(select(Site).where(Site.id.in_(site_ids)))).scalars()
+        }
+        if site_ids
+        else {}
+    )
+    addresses = list(
+        (
+            await session.execute(
+                select(Address).where(
+                    Address.site_id.in_(site_ids) | Address.company_id.in_(company_ids)
+                )
+            )
+        ).scalars()
+    )
+    by_site = {item.site_id: item for item in addresses if item.site_id}
+    by_company = {item.company_id: item for item in addresses if item.company_id}
+    return {
+        employment.id: (
+            sites[employment.site_id].name if employment.site_id in sites else None,
+            _address(
+                by_site.get(employment.site_id)
+                if employment.site_id
+                else by_company.get(company.id)
+            ),
+        )
+        for employment, _, company in workers
+    }
+
+
+def _card(
+    worker: tuple[Employment, Person, Company],
+    week_start: date,
+    assignments: dict[uuid.UUID, list[ScheduleAssignment]],
+    schedules: dict[uuid.UUID, WorkSchedule],
+    slots: dict[uuid.UUID, list[ScheduleSlot]],
+    holidays: set[tuple[uuid.UUID, date]],
+    marks: dict[uuid.UUID, list[datetime]],
+    adjustments: dict[tuple[uuid.UUID, date], AttendanceAdjustment],
+    locations: dict[uuid.UUID, tuple[str | None, str | None]],
+) -> WeeklyCardReportOut:
+    employment, person, company = worker
+    site_name, address = locations.get(employment.id, (None, None))
+    timezone = ZoneInfo(company.timezone)
+    days = [
+        _day(
+            employment,
+            week_start + timedelta(days=offset),
+            assignments.get(employment.id, []),
+            schedules,
+            slots,
+            holidays,
+            _local_marks(marks.get(person.id, []), week_start + timedelta(days=offset), timezone),
+            adjustments.get((employment.id, week_start + timedelta(days=offset))),
+        )
+        for offset in range(7)
+    ]
+    return WeeklyCardReportOut(
+        employment_id=employment.id,
+        person_id=person.id,
+        worker_name=_worker_name(person),
+        employee_number=employment.employee_number,
+        company_name=company.legal_name,
+        site_name=site_name,
+        address=address,
+        week_start=week_start,
+        week_end=week_start + timedelta(days=6),
+        days=days,
+    )
 
 
 @reports_router.get("/daily-arrivals", response_model=list[DailyArrivalReportOut])
@@ -221,17 +418,20 @@ async def daily_arrivals(
     _user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[DailyArrivalReportOut]:
-    workers, assignments, schedules, slots, holidays, marks_by_person = await _report_data(
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
         session, report_date, report_date, company_id=company_id
     )
     result: list[DailyArrivalReportOut] = []
     for employment, person, company in workers:
-        bounds = _scheduled_bounds(
+        expected = _bounds(
             employment, report_date, assignments.get(employment.id, []), schedules, slots, holidays
         )
-        timezone = (bounds[0].tzinfo or UTC) if bounds is not None else ZoneInfo(company.timezone)
-        marks = _local_marks(marks_by_person.get(person.id, []), report_date, timezone)
-        if marks:
+        timezone = expected[0].tzinfo if expected else ZoneInfo(company.timezone)
+        entry, _, _, _ = _events(
+            _local_marks(marks.get(person.id, []), report_date, timezone or UTC),
+            adjustments.get((employment.id, report_date)),
+        )
+        if entry:
             result.append(
                 DailyArrivalReportOut(
                     person_id=person.id,
@@ -240,8 +440,10 @@ async def daily_arrivals(
                     employee_number=employment.employee_number,
                     company_name=company.legal_name,
                     report_date=report_date,
-                    first_mark_at=marks[0],
-                    mark_count=len(marks),
+                    first_mark_at=entry,
+                    mark_count=len(
+                        _local_marks(marks.get(person.id, []), report_date, timezone or UTC)
+                    ),
                 )
             )
     return sorted(result, key=lambda item: (item.first_mark_at, item.worker_name))
@@ -254,26 +456,22 @@ async def absences(
     _user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[AbsenceReportOut]:
-    workers, assignments, schedules, slots, holidays, marks_by_person = await _report_data(
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
         session, report_date, report_date, company_id=company_id
     )
-    now = datetime.now(UTC)
     result: list[AbsenceReportOut] = []
     for employment, person, company in workers:
-        bounds = _scheduled_bounds(
+        expected = _bounds(
             employment, report_date, assignments.get(employment.id, []), schedules, slots, holidays
         )
-        if bounds is None:
+        if expected is None:
             continue
-        expected_entry, _, tolerance = bounds
-        if report_date == datetime.now(expected_entry.tzinfo).date() and now < (
-            expected_entry.astimezone(UTC) + timedelta(minutes=tolerance)
-        ):
-            continue
-        marks = _local_marks(
-            marks_by_person.get(person.id, []), report_date, expected_entry.tzinfo or UTC
+        adjustment = adjustments.get((employment.id, report_date))
+        entry, _, _, _ = _events(
+            _local_marks(marks.get(person.id, []), report_date, expected[0].tzinfo or UTC),
+            adjustment,
         )
-        if not marks:
+        if entry is None or adjustment and adjustment.absence_kind:
             result.append(
                 AbsenceReportOut(
                     person_id=person.id,
@@ -282,7 +480,7 @@ async def absences(
                     employee_number=employment.employee_number,
                     company_name=company.legal_name,
                     report_date=report_date,
-                    expected_entry_at=expected_entry,
+                    expected_entry_at=expected[0],
                 )
             )
     return result
@@ -290,41 +488,35 @@ async def absences(
 
 @reports_router.get("/weekly-card", response_model=WeeklyCardReportOut)
 async def weekly_card(
-    person_id: uuid.UUID,
     week_start: date,
+    employment_id: uuid.UUID | None = None,
+    person_id: uuid.UUID | None = None,
     _user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> WeeklyCardReportOut:
     if week_start.weekday() != 0:
         raise HTTPException(status_code=422, detail="week_start must be a Monday")
-    week_end = week_start + timedelta(days=6)
-    workers, _, schedules, _, _, marks_by_person = await _report_data(
-        session, week_start, week_end, person_id=person_id
+    if employment_id is None and person_id is None:
+        raise HTTPException(status_code=422, detail="employment_id or person_id is required")
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
+        session,
+        week_start,
+        week_start + timedelta(days=6),
+        person_id=person_id,
+        employment_id=employment_id,
     )
     if not workers:
-        raise HTTPException(
-            status_code=404, detail="Worker not found or has no employment in this week"
-        )
-    person = workers[0][1]
-    timezone = ZoneInfo(workers[0][2].timezone)
-    days: list[WeeklyCardDayOut] = []
-    for offset in range(7):
-        report_day = week_start + timedelta(days=offset)
-        marks = _local_marks(marks_by_person.get(person.id, []), report_day, timezone)
-        days.append(
-            WeeklyCardDayOut(
-                report_date=report_day,
-                first_mark_at=marks[0] if marks else None,
-                last_mark_at=marks[-1] if marks else None,
-                mark_count=len(marks),
-            )
-        )
-    return WeeklyCardReportOut(
-        person_id=person.id,
-        worker_name=_worker_name(person),
-        week_start=week_start,
-        week_end=week_end,
-        days=days,
+        raise HTTPException(status_code=404, detail="Worker not found or inactive in this week")
+    return _card(
+        workers[0],
+        week_start,
+        assignments,
+        schedules,
+        slots,
+        holidays,
+        marks,
+        adjustments,
+        await _locations(session, workers),
     )
 
 
@@ -333,46 +525,41 @@ async def punctuality(
     company_id: uuid.UUID,
     date_from: date,
     date_to: date,
-    mode: str = Query(default="both", pattern="^(both|late|early)$"),
+    mode: Literal["both", "late", "early"] = "both",
     _user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[PunctualityReportOut]:
     if date_to < date_from or (date_to - date_from).days > 366:
         raise HTTPException(status_code=422, detail="Use an ordered range of at most 366 days")
-    workers, assignments, schedules, slots, holidays, marks_by_person = await _report_data(
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
         session, date_from, date_to, company_id=company_id
     )
     result: list[PunctualityReportOut] = []
-    report_day = date_from
-    while report_day <= date_to:
+    day = date_from
+    while day <= date_to:
         for employment, person, company in workers:
-            bounds = _scheduled_bounds(
-                employment,
-                report_day,
-                assignments.get(employment.id, []),
-                schedules,
-                slots,
-                holidays,
+            expected = _bounds(
+                employment, day, assignments.get(employment.id, []), schedules, slots, holidays
             )
-            if bounds is None:
+            adjustment = adjustments.get((employment.id, day))
+            if expected is None or adjustment and adjustment.absence_kind:
                 continue
-            expected_entry, expected_exit, tolerance = bounds
-            marks = _local_marks(
-                marks_by_person.get(person.id, []), report_day, expected_entry.tzinfo or UTC
+            entry, _, _, exit_at = _events(
+                _local_marks(marks.get(person.id, []), day, expected[0].tzinfo or UTC), adjustment
             )
-            if not marks:
+            if entry is None:
                 continue
-            late_minutes = max(
-                0, int((marks[0] - expected_entry).total_seconds() // 60) - tolerance
-            )
-            early_minutes = (
-                max(0, int((expected_exit - marks[-1]).total_seconds() // 60))
-                if expected_exit
+            late = max(0, int((entry - expected[0]).total_seconds() // 60) - expected[2])
+            early = (
+                max(0, int((expected[1] - exit_at).total_seconds() // 60))
+                if expected[1] and exit_at
                 else 0
             )
-            if (mode == "late" and late_minutes == 0) or (mode == "early" and early_minutes == 0):
-                continue
-            if mode == "both" and late_minutes == 0 and early_minutes == 0:
+            if (
+                (mode == "late" and not late)
+                or (mode == "early" and not early)
+                or (mode == "both" and not late and not early)
+            ):
                 continue
             result.append(
                 PunctualityReportOut(
@@ -381,14 +568,256 @@ async def punctuality(
                     worker_name=_worker_name(person),
                     employee_number=employment.employee_number,
                     company_name=company.legal_name,
-                    report_date=report_day,
-                    expected_entry_at=expected_entry,
-                    first_mark_at=marks[0],
-                    late_minutes=late_minutes,
-                    expected_exit_at=expected_exit,
-                    last_mark_at=marks[-1],
-                    early_departure_minutes=early_minutes,
+                    report_date=day,
+                    expected_entry_at=expected[0],
+                    first_mark_at=entry,
+                    late_minutes=late,
+                    expected_exit_at=expected[1],
+                    last_mark_at=exit_at,
+                    early_departure_minutes=early,
                 )
             )
-        report_day += timedelta(days=1)
+        day += timedelta(days=1)
     return result
+
+
+def _validate_adjustment(payload: AttendanceAdjustmentIn) -> None:
+    times = [payload.entry_at, payload.meal_out_at, payload.meal_in_at, payload.exit_at]
+    if payload.absence_kind and any(times):
+        raise HTTPException(
+            status_code=422, detail="An absence cannot also contain attendance times"
+        )
+    if not payload.absence_kind and not any(times):
+        raise HTTPException(
+            status_code=422, detail="Provide at least one time or an absence classification"
+        )
+    values = [value for value in times if value]
+    if any(value.tzinfo is None for value in values) or any(
+        first >= second for first, second in zip(values, values[1:], strict=False)
+    ):
+        raise HTTPException(
+            status_code=422, detail="Attendance times must include timezone and be chronological"
+        )
+
+
+@reports_router.get("/adjustments", response_model=list[AttendanceAdjustmentOut])
+async def list_adjustments(
+    employment_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+    _user: User = Depends(deps.require_permission("attendance.read")),
+    session: AsyncSession = Depends(get_db),
+) -> list[AttendanceAdjustment]:
+    return list(
+        (
+            await session.execute(
+                select(AttendanceAdjustment)
+                .where(
+                    AttendanceAdjustment.employment_id == employment_id,
+                    AttendanceAdjustment.attendance_date >= date_from,
+                    AttendanceAdjustment.attendance_date <= date_to,
+                )
+                .order_by(AttendanceAdjustment.attendance_date)
+            )
+        ).scalars()
+    )
+
+
+@reports_router.put("/adjustments/{employment_id}", response_model=AttendanceAdjustmentOut)
+async def save_adjustment(
+    employment_id: uuid.UUID,
+    payload: AttendanceAdjustmentIn,
+    user: User = Depends(deps.require_permission("attendance.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> AttendanceAdjustment:
+    _validate_adjustment(payload)
+    if await session.get(Employment, employment_id) is None:
+        raise HTTPException(status_code=404, detail="Employment not found")
+    row = await session.scalar(
+        select(AttendanceAdjustment).where(
+            AttendanceAdjustment.employment_id == employment_id,
+            AttendanceAdjustment.attendance_date == payload.attendance_date,
+        )
+    )
+    values = payload.model_dump()
+    if row is None:
+        row = AttendanceAdjustment(
+            employment_id=employment_id, created_by=user.id, updated_by=user.id, **values
+        )
+        session.add(row)
+        action = "attendance_adjustment.create"
+    else:
+        for key, value in values.items():
+            setattr(row, key, value)
+        row.updated_by = user.id
+        action = "attendance_adjustment.update"
+    await session.flush()
+    await audit_svc.record(
+        session,
+        action=action,
+        user_id=user.id,
+        resource_type="attendance_adjustment",
+        resource_id=row.id,
+        request_id=rid,
+        metadata={
+            "employment_id": str(employment_id),
+            "attendance_date": payload.attendance_date.isoformat(),
+            "absence_kind": payload.absence_kind,
+        },
+    )
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+def _pdf_text(value: str) -> str:
+    return value.encode("cp1252", "replace").hex().upper()
+
+
+def _pdf_page(card: WeeklyCardReportOut) -> bytes:
+    commands: list[str] = ["0.2 w"]
+
+    def text(x: int, y: int, value: str, size: int = 9) -> None:
+        commands.append(f"BT /F1 {size} Tf {x} {y} Td <{_pdf_text(value[:110])}> Tj ET")
+
+    text(70, 800, card.company_name.upper(), 17)
+    text(70, 782, card.site_name or "CENTRO DE TRABAJO", 11)
+    if card.address:
+        text(70, 767, card.address, 8)
+    commands.append("42 753 m 553 753 l S")
+    text(42, 733, "TARJETA SEMANAL DE ASISTENCIA", 13)
+    text(42, 716, f"Trabajador: {card.worker_name}", 10)
+    text(330, 716, f"No. empleado: {card.employee_number}", 10)
+    text(
+        42,
+        701,
+        f"Semana: {card.week_start.isoformat()} al {card.week_end.isoformat()} (lunes a domingo)",
+        9,
+    )
+    for x, label in (
+        (42, "Día"),
+        (116, "Clasificación"),
+        (262, "Entrada"),
+        (323, "Salida comida"),
+        (405, "Regreso comida"),
+        (490, "Salida"),
+    ):
+        text(x, 678, label, 8)
+    y = 649
+    names = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+    for index, day in enumerate(card.days):
+        text(42, y, f"{names[index]} {day.report_date.strftime('%d/%m')}", 8)
+        text(116, y, day.day_kind, 7)
+        for x, value in (
+            (262, day.entry_at),
+            (343, day.meal_out_at),
+            (425, day.meal_in_at),
+            (500, day.exit_at),
+        ):
+            text(x, y, value.strftime("%H:%M") if value else "—", 8)
+        if day.late_minutes or day.early_departure_minutes:
+            text(
+                116,
+                y - 11,
+                "Retardo: "
+                f"{day.late_minutes} min; salida fuera de horario: "
+                f"{day.early_departure_minutes} min",
+                7,
+            )
+        commands.append(f"42 {y - 18} m 553 {y - 18} l S")
+        y -= 31
+    text(
+        42,
+        115,
+        "Checadas del reloj: evidencia; ajustes de RR. HH.: auditables.",
+        7,
+    )
+    text(70, 72, "Firma del trabajador", 8)
+    text(380, 72, "Revisión de RR. HH.", 8)
+    commands.append("70 82 m 240 82 l S 370 82 m 540 82 l S")
+    return "\n".join(commands).encode("ascii")
+
+
+def _pdf(cards: list[WeeklyCardReportOut]) -> bytes:
+    content = [_pdf_page(card) for card in cards]
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids ["
+        + b" ".join(f"{4 + i * 2} 0 R".encode() for i in range(len(content)))
+        + f"] /Count {len(content)} >>".encode(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    ]
+    for i, item in enumerate(content):
+        stream = 5 + i * 2
+        objects.extend(
+            [
+                (
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                    "/Resources << /Font << /F1 3 0 R >> >> "
+                    f"/Contents {stream} 0 R >>"
+                ).encode(),
+                b"<< /Length " + str(len(item)).encode() + b" >>\nstream\n" + item + b"\nendstream",
+            ]
+        )
+    out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for number, item in enumerate(objects, 1):
+        offsets.append(len(out))
+        out.extend(f"{number} 0 obj\n".encode() + item + b"\nendobj\n")
+    start = len(out)
+    out.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
+    out.extend(b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:]))
+    out.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n".encode()
+    )
+    return bytes(out)
+
+
+@reports_router.get("/weekly-cards.pdf")
+async def weekly_cards_pdf(
+    week_start: date,
+    company_id: uuid.UUID | None = None,
+    corporate_group_id: uuid.UUID | None = None,
+    employment_id: uuid.UUID | None = None,
+    _user: User = Depends(deps.require_permission("attendance.export")),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    if week_start.weekday() != 0:
+        raise HTTPException(status_code=422, detail="week_start must be a Monday")
+    if sum(value is not None for value in (company_id, corporate_group_id, employment_id)) != 1:
+        raise HTTPException(
+            status_code=422, detail="Select exactly one company, group or employment"
+        )
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
+        session,
+        week_start,
+        week_start + timedelta(days=6),
+        company_id=company_id,
+        group_id=corporate_group_id,
+        employment_id=employment_id,
+    )
+    if not workers:
+        raise HTTPException(status_code=404, detail="No active workers found for this selection")
+    locations = await _locations(session, workers)
+    cards = [
+        _card(
+            worker,
+            week_start,
+            assignments,
+            schedules,
+            slots,
+            holidays,
+            marks,
+            adjustments,
+            locations,
+        )
+        for worker in workers
+    ]
+    return Response(
+        content=_pdf(cards),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="tarjetas_{week_start.isoformat()}.pdf"'
+        },
+    )

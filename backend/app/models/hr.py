@@ -8,7 +8,7 @@ controls; these tables establish the auditable business context first.
 from __future__ import annotations
 
 import uuid
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
@@ -16,6 +16,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -308,6 +309,8 @@ class Holiday(Base, UUIDPKMixin, TimestampMixin):
         UniqueConstraint("company_id", "holiday_date", name="uq_holidays_company_date"),
         Index("ix_holidays_company_date", "company_id", "holiday_date"),
     )
+
+
 class ScheduleSlot(Base, UUIDPKMixin, TimestampMixin):
     __tablename__ = "schedule_slots"
 
@@ -355,6 +358,43 @@ class ScheduleAssignment(Base, UUIDPKMixin, TimestampMixin):
             name="ck_schedule_assignments_date_range",
         ),
         Index("ix_schedule_assignments_employment", "employment_id"),
+    )
+
+
+class AttendanceAdjustment(Base, UUIDPKMixin, TimestampMixin):
+    """HR override for one worker-day; raw clock events remain immutable.
+
+    An override is deliberately stored at the daily-card layer.  It can fill
+    any missing event, replace an event wrongly attributed by the terminal,
+    or classify a no-show.  The audit log records every change made to it.
+    """
+
+    __tablename__ = "attendance_adjustments"
+
+    employment_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("employments.id", ondelete="RESTRICT"), nullable=False
+    )
+    attendance_date: Mapped[date] = mapped_column(Date, nullable=False)
+    entry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meal_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meal_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    absence_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "absence_kind IS NULL OR absence_kind IN ('justified', 'unjustified')",
+            name="ck_attendance_adjustments_absence_kind",
+        ),
+        UniqueConstraint("employment_id", "attendance_date", name="uq_attendance_adjustments_day"),
+        Index("ix_attendance_adjustments_employment_day", "employment_id", "attendance_date"),
     )
 
 

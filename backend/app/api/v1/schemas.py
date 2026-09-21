@@ -507,17 +507,48 @@ class AbsenceReportOut(BaseModel):
 
 class WeeklyCardDayOut(BaseModel):
     report_date: date
-    first_mark_at: datetime | None = None
-    last_mark_at: datetime | None = None
+    day_kind: str
+    entry_at: datetime | None = None
+    meal_out_at: datetime | None = None
+    meal_in_at: datetime | None = None
+    exit_at: datetime | None = None
     mark_count: int
+    late_minutes: int = 0
+    early_departure_minutes: int = 0
+    adjustment_id: uuid.UUID | None = None
+    adjustment_reason: str | None = None
 
 
 class WeeklyCardReportOut(BaseModel):
+    employment_id: uuid.UUID
     person_id: uuid.UUID
     worker_name: str
+    employee_number: str
+    company_name: str
+    site_name: str | None = None
+    address: str | None = None
     week_start: date
     week_end: date
     days: list[WeeklyCardDayOut]
+
+
+class AttendanceAdjustmentIn(BaseModel):
+    attendance_date: date
+    entry_at: datetime | None = None
+    meal_out_at: datetime | None = None
+    meal_in_at: datetime | None = None
+    exit_at: datetime | None = None
+    absence_kind: str | None = Field(default=None, pattern="^(justified|unjustified)$")
+    reason: str = Field(min_length=5, max_length=500)
+
+
+class AttendanceAdjustmentOut(AttendanceAdjustmentIn):
+    id: uuid.UUID
+    employment_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class PunctualityReportOut(BaseModel):

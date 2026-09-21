@@ -63,17 +63,43 @@ export interface AbsenceReport {
 
 export interface WeeklyCardDay {
   report_date: string;
-  first_mark_at: string | null;
-  last_mark_at: string | null;
+  day_kind: string;
+  entry_at: string | null;
+  meal_out_at: string | null;
+  meal_in_at: string | null;
+  exit_at: string | null;
   mark_count: number;
+  late_minutes: number;
+  early_departure_minutes: number;
+  adjustment_id: string | null;
+  adjustment_reason: string | null;
 }
 
 export interface WeeklyCardReport {
+  employment_id: string;
   person_id: string;
   worker_name: string;
+  employee_number: string;
+  company_name: string;
+  site_name: string | null;
+  address: string | null;
   week_start: string;
   week_end: string;
   days: WeeklyCardDay[];
+}
+
+export interface AttendanceAdjustment {
+  id: string;
+  employment_id: string;
+  attendance_date: string;
+  entry_at: string | null;
+  meal_out_at: string | null;
+  meal_in_at: string | null;
+  exit_at: string | null;
+  absence_kind: "justified" | "unjustified" | null;
+  reason: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PunctualityReport {
