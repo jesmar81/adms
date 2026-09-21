@@ -1,5 +1,6 @@
 import type {
   AdminUser,
+  AbsenceReport,
   AttendanceRow,
   AuditEntry,
   Company,
@@ -9,6 +10,7 @@ import type {
   DeviceCommand,
   DeviceEvent,
   DeviceUser,
+  DailyArrivalReport,
   Employment,
   EmploymentCompensation,
   EnrollmentRequest,
@@ -19,8 +21,10 @@ import type {
   PersonPhoto,
   PersonAttendancePage,
   PersonSensitiveIdentifiers,
+  PunctualityReport,
   ScheduleAssignment,
   Site,
+  WeeklyCardReport,
   WorkSchedule,
 } from "@/types";
 
@@ -192,6 +196,22 @@ class ApiClient {
 
   attendance(params: Record<string, string> = {}): Promise<AttendanceRow[]> {
     return this.get("/api/v1/attendance", params);
+  }
+
+  dailyArrivals(params: Record<string, string>): Promise<DailyArrivalReport[]> {
+    return this.get("/api/v1/reports/daily-arrivals", params);
+  }
+
+  absencesReport(params: Record<string, string>): Promise<AbsenceReport[]> {
+    return this.get("/api/v1/reports/absences", params);
+  }
+
+  weeklyCard(params: Record<string, string>): Promise<WeeklyCardReport> {
+    return this.get("/api/v1/reports/weekly-card", params);
+  }
+
+  punctualityReport(params: Record<string, string>): Promise<PunctualityReport[]> {
+    return this.get("/api/v1/reports/punctuality", params);
   }
 
   corporateGroups(): Promise<CorporateGroup[]> {

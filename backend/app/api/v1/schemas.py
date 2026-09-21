@@ -484,6 +484,57 @@ class AttendanceOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DailyArrivalReportOut(BaseModel):
+    person_id: uuid.UUID
+    employment_id: uuid.UUID
+    worker_name: str
+    employee_number: str
+    company_name: str
+    report_date: date
+    first_mark_at: datetime
+    mark_count: int
+
+
+class AbsenceReportOut(BaseModel):
+    person_id: uuid.UUID
+    employment_id: uuid.UUID
+    worker_name: str
+    employee_number: str
+    company_name: str
+    report_date: date
+    expected_entry_at: datetime
+
+
+class WeeklyCardDayOut(BaseModel):
+    report_date: date
+    first_mark_at: datetime | None = None
+    last_mark_at: datetime | None = None
+    mark_count: int
+
+
+class WeeklyCardReportOut(BaseModel):
+    person_id: uuid.UUID
+    worker_name: str
+    week_start: date
+    week_end: date
+    days: list[WeeklyCardDayOut]
+
+
+class PunctualityReportOut(BaseModel):
+    person_id: uuid.UUID
+    employment_id: uuid.UUID
+    worker_name: str
+    employee_number: str
+    company_name: str
+    report_date: date
+    expected_entry_at: datetime | None = None
+    first_mark_at: datetime | None = None
+    late_minutes: int = 0
+    expected_exit_at: datetime | None = None
+    last_mark_at: datetime | None = None
+    early_departure_minutes: int = 0
+
+
 class PersonAttendancePageOut(BaseModel):
     """A stable keyset page of raw attendance marks for one person."""
 

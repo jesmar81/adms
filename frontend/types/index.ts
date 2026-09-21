@@ -40,6 +40,57 @@ export interface AttendanceRow {
   work_code: string | null;
 }
 
+export interface DailyArrivalReport {
+  person_id: string;
+  employment_id: string;
+  worker_name: string;
+  employee_number: string;
+  company_name: string;
+  report_date: string;
+  first_mark_at: string;
+  mark_count: number;
+}
+
+export interface AbsenceReport {
+  person_id: string;
+  employment_id: string;
+  worker_name: string;
+  employee_number: string;
+  company_name: string;
+  report_date: string;
+  expected_entry_at: string;
+}
+
+export interface WeeklyCardDay {
+  report_date: string;
+  first_mark_at: string | null;
+  last_mark_at: string | null;
+  mark_count: number;
+}
+
+export interface WeeklyCardReport {
+  person_id: string;
+  worker_name: string;
+  week_start: string;
+  week_end: string;
+  days: WeeklyCardDay[];
+}
+
+export interface PunctualityReport {
+  person_id: string;
+  employment_id: string;
+  worker_name: string;
+  employee_number: string;
+  company_name: string;
+  report_date: string;
+  expected_entry_at: string | null;
+  first_mark_at: string | null;
+  late_minutes: number;
+  expected_exit_at: string | null;
+  last_mark_at: string | null;
+  early_departure_minutes: number;
+}
+
 export interface PersonAttendancePage {
   items: AttendanceRow[];
   next_cursor: string | null;

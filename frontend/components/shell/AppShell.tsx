@@ -7,6 +7,7 @@ import {
   Clock,
   Building2,
   Fingerprint,
+  FileBarChart,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -61,6 +62,7 @@ const NAV: NavSection[] = [
     title: "Asistencia",
     items: [
       { href: "/attendance", label: "Marcaciones", icon: <Clock className="h-[18px] w-[18px]" aria-hidden />, perm: "attendance.read" },
+      { href: "/reports", label: "Reportes", icon: <FileBarChart className="h-[18px] w-[18px]" aria-hidden />, perm: "attendance.read" },
       { href: "/device-users", label: "Personal en reloj", icon: <Users className="h-[18px] w-[18px]" aria-hidden />, perm: "device_users.read" },
       { href: "/enrollments", label: "Enrolamientos", icon: <Fingerprint className="h-[18px] w-[18px]" aria-hidden />, perm: "enrollments.read" },
     ],
@@ -83,6 +85,7 @@ const CRUMB_TITLES: Record<string, string> = {
   devices: "Relojes",
   commands: "Comandos",
   attendance: "Marcaciones",
+  reports: "Reportes",
   "device-users": "Personal en reloj",
   companies: "Empresas y sucursales",
   people: "Trabajadores",

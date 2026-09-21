@@ -54,7 +54,7 @@ class Company(Base, UUIDPKMixin, TimestampMixin):
     employer_registration: Mapped[str | None] = mapped_column(String(32), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="America/Mexico_City", nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    address: Mapped["Address | None"] = relationship(
+    address: Mapped[Address | None] = relationship(
         back_populates="company",
         foreign_keys="Address.company_id",
         uselist=False,
@@ -77,7 +77,7 @@ class Site(Base, UUIDPKMixin, TimestampMixin):
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="America/Mexico_City", nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    address: Mapped["Address | None"] = relationship(
+    address: Mapped[Address | None] = relationship(
         back_populates="site",
         foreign_keys="Address.site_id",
         uselist=False,

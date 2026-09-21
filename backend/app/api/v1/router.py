@@ -16,6 +16,7 @@ from app.api.v1.hr import (
     schedules_router,
     sites_router,
 )
+from app.api.v1.reports import reports_router
 from app.api.v1.resources import (
     attendance_router,
     audit_router,
@@ -36,6 +37,7 @@ router.include_router(schedules_router)
 router.include_router(holidays_router)
 router.include_router(enrollments_router)
 router.include_router(attendance_router)
+router.include_router(reports_router)
 router.include_router(device_users_router)
 router.include_router(commands_router)
 router.include_router(users_router)

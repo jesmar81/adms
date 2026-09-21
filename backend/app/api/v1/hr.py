@@ -152,8 +152,7 @@ async def _replace_business_address(
     """Replace the single structured address owned by a company or branch."""
 
     if payload is None:
-        if owner.address is not None:
-            owner.address = None
+        owner.address = None
         return
     values = payload.model_dump()
     if owner.address is None:
@@ -260,7 +259,7 @@ async def update_company(
     for key, value in changes.items():
         setattr(row, key, value)
     if address is not _UNSET:
-        await _replace_business_address(row, address)
+        await _replace_business_address(row, payload.address)
     await session.flush()
     await _audit(session, user, "company.update", "company", row.id, rid)
     await session.commit()
@@ -398,7 +397,7 @@ async def update_site(
     for key, value in changes.items():
         setattr(row, key, value)
     if address is not _UNSET:
-        await _replace_business_address(row, address)
+        await _replace_business_address(row, payload.address)
     await session.flush()
     await _audit(session, user, "site.update", "site", row.id, rid)
     await session.commit()

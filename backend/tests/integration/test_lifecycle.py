@@ -110,6 +110,89 @@ async def test_create_confirm_lifecycle(life_client) -> None:  # type: ignore[no
     assert any(e["type"] == "user_sync_confirmed" for e in events)
 
 
+async def test_schedule_aware_reports(life_client) -> None:  # type: ignore[no-untyped-def]
+    group = (
+        await life_client.post("/api/v1/corporate-groups", json={"name": "R", "code": "RPT"})
+    ).json()
+    company = (
+        await life_client.post(
+            "/api/v1/companies",
+            json={"corporate_group_id": group["id"], "legal_name": "Reportes"},
+        )
+    ).json()
+    worker = (
+        await life_client.post(
+            "/api/v1/people",
+            json={"corporate_group_id": group["id"], "first_name": "Luz", "last_name": "Paz"},
+        )
+    ).json()
+    absent = (
+        await life_client.post(
+            "/api/v1/people",
+            json={"corporate_group_id": group["id"], "first_name": "Sin", "last_name": "Marca"},
+        )
+    ).json()
+    slots = [
+        {"day_of_week": day, "kind": kind, "expected_at": expected}
+        for day in range(5)
+        for kind, expected in (("entry", "09:00"), ("exit", "18:00"))
+    ]
+    schedule = (
+        await life_client.post(
+            "/api/v1/work-schedules",
+            json={"company_id": company["id"], "name": "L-V", "slots": slots},
+        )
+    ).json()
+    for person, number in ((worker, "R-01"), (absent, "R-02")):
+        employment = (
+            await life_client.post(
+                f"/api/v1/people/{person['id']}/employments",
+                json={
+                    "company_id": company["id"],
+                    "employee_number": number,
+                    "started_on": "2026-01-01",
+                },
+            )
+        ).json()
+        assignment = await life_client.post(
+            f"/api/v1/employments/{employment['id']}/schedule-assignments",
+            json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-01"},
+        )
+        assert assignment.status_code == 201
+    device_id = await _device_id(life_client, "RPT001")
+    patched = await life_client.patch(
+        f"/api/v1/devices/{device_id}", json={"timezone": "America/Mexico_City"}
+    )
+    assert patched.status_code == 200
+    linked = await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"person_id": worker["id"], "pin": "501", "name": "Luz Paz"},
+    )
+    assert linked.status_code == 201
+    marks = await life_client.post(
+        "/iclock/cdata?SN=RPT001&table=ATTLOG",
+        content="501\t2026-09-14 09:15:00\t0\t15\t\n501\t2026-09-14 17:30:00\t1\t15\t",
+    )
+    assert marks.status_code == 200
+    arrivals = await life_client.get(
+        f"/api/v1/reports/daily-arrivals?company_id={company['id']}&report_date=2026-09-14"
+    )
+    assert arrivals.json()[0]["worker_name"] == "Luz Paz"
+    absences = await life_client.get(
+        f"/api/v1/reports/absences?company_id={company['id']}&report_date=2026-09-14"
+    )
+    assert [row["worker_name"] for row in absences.json()] == ["Sin Marca"]
+    card = await life_client.get(
+        f"/api/v1/reports/weekly-card?person_id={worker['id']}&week_start=2026-09-14"
+    )
+    assert len(card.json()["days"]) == 7
+    punctuality = await life_client.get(
+        f"/api/v1/reports/punctuality?company_id={company['id']}&date_from=2026-09-14&date_to=2026-09-14"
+    )
+    assert punctuality.json()[0]["late_minutes"] == 15
+    assert punctuality.json()[0]["early_departure_minutes"] == 30
+
+
 async def test_acc_security_push_blocks_unvalidated_legacy_user_wire(life_client) -> None:  # type: ignore[no-untyped-def]
     device_id = await _device_id(life_client, "ACCLOCK1")
     # Registration records the actual Security PUSH device type; legacy
