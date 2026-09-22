@@ -37,8 +37,6 @@ const COMMAND_TYPES = [
   "DELETE_USERINFO",
 ];
 
-const SECURITY_PUSH_SAFE_COMMAND_TYPES = ["INFO", "CHECK", "LOG", "GET_OPTION"];
-
 const TABS = [
   { id: "users", label: "Personal" },
   { id: "attendance", label: "Marcaciones" },
@@ -186,8 +184,7 @@ function DetailInner({ id }: { id: string }) {
   if (!device) return <LoadingState rows={6} />;
 
   const status = device.derived_status ?? device.status;
-  const isSecurityPush = String(device.options.DeviceType ?? "").toLowerCase() === "acc";
-  const commandTypes = isSecurityPush ? SECURITY_PUSH_SAFE_COMMAND_TYPES : COMMAND_TYPES;
+  const commandTypes = COMMAND_TYPES;
   const info: [string, string][] = [
     ["Nombre", device.name ?? "—"],
     ["Modelo", device.model ?? "—"],
@@ -263,13 +260,7 @@ function DetailInner({ id }: { id: string }) {
               </div>
             ))}
           </div>
-          {capabilities.blocked_operations.length ? (
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              <p className="font-medium">Sincronización de usuarios protegida</p>
-              <p className="mt-1">Bloqueado: {capabilities.blocked_operations.join(", ")}.</p>
-              <p className="mt-1 text-amber-800">{capabilities.next_validation}</p>
-            </div>
-          ) : null}
+          {capabilities.next_validation ? <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900"><p className="font-medium">Estado de validación del protocolo</p><p className="mt-1 text-sky-800">{capabilities.next_validation}</p></div> : null}
         </Card>
       ) : null}
 
@@ -325,7 +316,7 @@ function DetailInner({ id }: { id: string }) {
                   />
                 )}
               </Field>
-              {isSecurityPush ? <p className="text-xs leading-relaxed text-amber-700">Este V5L usa A&amp;C Security PUSH. Las altas, bajas e importación de usuarios permanecen bloqueadas hasta validar su intercambio real de querydata/devicecmd.</p> : null}
+              <p className="text-xs leading-relaxed text-sky-800">Para este ciclo de validación, usa un PIN de laboratorio y conserva la captura completa de la respuesta del reloj.</p>
             </div>
           </div>
         </Card>

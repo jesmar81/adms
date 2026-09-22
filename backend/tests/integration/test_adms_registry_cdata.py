@@ -71,9 +71,7 @@ def test_cdata_userinfo_ok(app_client) -> None:  # type: ignore[no-untyped-def]
 
 def test_querydata_user_sync_accepts_security_push_field_case(app_client) -> None:  # type: ignore[no-untyped-def]
     body = "Pin=101\tName=Ana\tPrivilege=0\tCard=101"
-    response = app_client.post(
-        "/iclock/querydata?SN=ACCQUERY1&type=user&cmdid=7", content=body
-    )
+    response = app_client.post("/iclock/querydata?SN=ACCQUERY1&type=user&cmdid=7", content=body)
     assert response.status_code == 200
     assert response.text == "OK"
     users = app_client.get("/api/v1/device-users?device_id=not-a-uuid")

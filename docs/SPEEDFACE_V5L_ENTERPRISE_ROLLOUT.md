@@ -37,23 +37,14 @@ que el equipo aplicó el cambio no es una integración apta para producción.
 
 ## Siguiente captura controlada
 
-La validación integral anterior ya está cerrada. En una ventana de
-mantenimiento, con sólo un operador y sin editar usuarios productivos, sigue
-la [captura pendiente de usuarios](SPEEDFACE_V5L_REMAINING_CAPTURE.md). El
-procedimiento resumido es:
+La validación integral anterior ya está archivada. En una ventana de
+mantenimiento, con un operador y exclusivamente un PIN de laboratorio, sigue
+la [captura activa de comandos](SPEEDFACE_V5L_USER_COMMAND_CAPTURE.md). El
+asistente registra consulta, alta, cambio de nombre y baja contra el reloj,
+junto con sus respuestas reales, sin tocar por sí mismo el dispositivo.
 
-1. Capturar con `scripts/capture_speedface_v5l_remaining.ps1` en el servidor
-   que recibe al reloj.
-2. Desde el sistema autorizado que administra el V5L, hacer sólo una lectura
-   de inventario de usuarios; no una escritura ni un comando inferido.
-3. Conservar la petición, respuesta, paginación/finalización y acuse HTTP
-   completos, cualquiera que sea su endpoint (`querydata` no se presupone).
-4. Decodificar el PCAP localmente. El PCAP y las transcripciones contienen
-   datos personales: se conservan fuera de Git.
-
-Con esa evidencia se añade el adaptador de lectura de usuarios exacto. Sólo
-después se prueba una alta sobre un PIN de laboratorio y se habilitan cambios
-de producción mediante aprobación de dos personas.
+El PCAP y las transcripciones contienen datos personales: se conservan fuera
+de Git y se revisan antes de usar estas operaciones en producción.
 
 ## Criterios para habilitar sincronización
 

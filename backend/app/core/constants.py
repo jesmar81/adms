@@ -92,6 +92,8 @@ PERMISSIONS = (
     "sites.write",
     "people.read",
     "people.write",
+    "people.sensitive.read",
+    "people.sensitive.write",
     "employments.read",
     "employments.write",
     "payroll.read",

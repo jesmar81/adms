@@ -38,6 +38,8 @@ export interface AttendanceRow {
   status: number;
   verify_mode: number;
   work_code: string | null;
+  attribution_status: "assigned" | "ambiguous" | "unassigned";
+  employment_id: string | null;
 }
 
 export interface DailyArrivalReport {
@@ -305,10 +307,17 @@ export interface EnrollmentRequest {
   employment_id: string;
   device_id: string;
   methods: string[];
+  fingerprint_positions: string[];
   status: string;
   requested_by: string | null;
   approved_by: string | null;
   completed_by: string | null;
+  identity_verified_by: string | null;
+  identity_verified_at: string | null;
+  identity_verification_reference: string | null;
+  consent_recorded_by: string | null;
+  consent_recorded_at: string | null;
+  consent_reference: string | null;
   note: string | null;
 }
 
@@ -334,6 +343,8 @@ export interface AdminUser {
   is_active: boolean;
   is_superuser: boolean;
   roles: string[];
+  corporate_group_ids: string[];
+  company_ids: string[];
   last_login_at: string | null;
 }
 

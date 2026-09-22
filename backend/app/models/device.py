@@ -166,6 +166,46 @@ class AttendanceLog(Base, UUIDPKMixin):
     )
 
 
+class AttendanceAttribution(Base, UUIDPKMixin, TimestampMixin):
+    """Immutable mark-to-employment routing decision.
+
+    Reports consume only ``assigned`` rows. Ambiguous and unassigned marks
+    remain visible for reconciliation instead of leaking into every employment
+    held by the same person.
+    """
+
+    __tablename__ = "attendance_attributions"
+
+    attendance_log_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("attendance_logs.id", ondelete="CASCADE"), nullable=False
+    )
+    employment_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("employments.id", ondelete="RESTRICT"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    method: Mapped[str] = mapped_column(String(40), nullable=False, default="device_site")
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("attendance_log_id", name="uq_attendance_attributions_log"),
+        CheckConstraint(
+            "status IN ('assigned','ambiguous','unassigned')",
+            name="ck_attendance_attributions_status",
+        ),
+        CheckConstraint(
+            "(status = 'assigned' AND employment_id IS NOT NULL) OR "
+            "(status IN ('ambiguous','unassigned') AND employment_id IS NULL)",
+            name="ck_attendance_attributions_employment",
+        ),
+        Index("ix_attendance_attributions_employment", "employment_id"),
+        Index("ix_attendance_attributions_status", "status"),
+    )
+
+
 class AdmsPayload(Base, UUIDPKMixin):
     __tablename__ = "adms_payloads"
 

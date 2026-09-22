@@ -17,7 +17,7 @@ ZKTeco (prioridad: **SpeedFace-V5LP**): gateway ADMS con **FastAPI** + **Postgre
 > `https://github.com/athwari/laravel-zkteco-adms-server`
 
 - Protocolo ADMS: [`docs/ADMS_PROTOCOL.md`](docs/ADMS_PROTOCOL.md)
-- Captura de reloj real: [`docs/REAL_DEVICE_CAPTURE.md`](docs/REAL_DEVICE_CAPTURE.md)
+- Captura activa de comandos de usuario: [`docs/SPEEDFACE_V5L_USER_COMMAND_CAPTURE.md`](docs/SPEEDFACE_V5L_USER_COMMAND_CAPTURE.md)
 - Dominio de personal y asistencia multiempresa: [`docs/HR_ATTENDANCE_DOMAIN_PLAN.md`](docs/HR_ATTENDANCE_DOMAIN_PLAN.md)
 - Calendario laboral mexicano y protección de expediente: [`docs/HR_CALENDARS_MX.md`](docs/HR_CALENDARS_MX.md)
 - Base de datos: [`docs/DATABASE.md`](docs/DATABASE.md)
@@ -338,7 +338,7 @@ Variables principales en `backend/.env` (ver `backend/.env.example` comentado):
 | `DATABASE_URL` | `postgresql+asyncpg://zkteco:zkteco@localhost:5432/zkteco_adms` | Conexión PostgreSQL. En local usa `localhost`; el contenedor `backend` la sobrescribe a host `postgres` (ver `docker-compose.yml`) |
 | `REDIS_URL` | `redis://localhost:6379/0` | Igual: en contenedor se sobrescribe a host `redis` |
 | `JWT_PRIVATE_KEY_FILE` / `JWT_PUBLIC_KEY_FILE` | `.jwt_private.pem` / `.jwt_public.pem` | Claves RS256 (rotan con reinicio). El compose las monta en solo-lectura dentro del contenedor |
-| `ZKTECO_ADMIN_USERNAME/EMAIL/PASSWORD` | — | Bootstrap del primer superusuario (mín. 10 caracteres) |
+| `ZKTECO_ADMIN_USERNAME/EMAIL/PASSWORD` | — | Bootstrap del primer superusuario (mín. 15 caracteres) |
 | `FRONTEND_ORIGINS_RAW` | — | **Obligatorio para la UI**: `http://localhost:3000` en local (el compose ya lo fija para el contenedor). Nunca `*` con credenciales |
 | `RATELIMIT_*` | ver ejemplo | Límites de login/refresh/ADMS (Redis) |
 | `ZKTECO_ONLINE_THRESHOLD` / `ZKTECO_STALE_AFTER` | `120` / `86400` | Ventanas de estado online/offline/stale (segundos) |

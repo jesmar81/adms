@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.core.config import get_settings
 from app.core.constants import GET_OPTION_KEYS
 from app.core.exceptions import DeviceProtocolEvidenceRequiredError, InvalidCommandError
 from app.models.device import Device
@@ -24,7 +25,7 @@ class CommandType(StrEnum):
     GET_OPTION = "GET_OPTION"
 
 
-_USER_MUTATION_COMMANDS = frozenset(
+_USER_COMMANDS = frozenset(
     {CommandType.QUERY_USERINFO, CommandType.UPDATE_USERINFO, CommandType.DELETE_USERINFO}
 )
 
@@ -35,16 +36,20 @@ def is_security_push_device(device: Device) -> bool:
 
 
 def require_validated_user_command_profile(device: Device, command_type: CommandType) -> None:
-    """Block legacy USERINFO wire commands on an unvalidated ACC terminal.
+    """Require observed protocol evidence before using legacy USERINFO on ACC.
 
-    SpeedFace-V5L A&C PUSH uses a different query/update dialect from legacy
-    ADMS. Sending legacy writes can appear successful in our queue while doing
-    nothing (or producing an ambiguous negative return) on the terminal.
+    A supervised capture may opt in with
+    ``ZKTECO_ALLOW_UNVALIDATED_USER_COMMANDS=true``. That switch must remain
+    disabled in normal production operation.
     """
-    if is_security_push_device(device) and command_type in _USER_MUTATION_COMMANDS:
+    if (
+        is_security_push_device(device)
+        and command_type in _USER_COMMANDS
+        and not get_settings().zkteco_allow_unvalidated_user_commands
+    ):
         raise DeviceProtocolEvidenceRequiredError(
-            "Security PUSH user synchronization is blocked until a real V5L "
-            "querydata/devicecmd capture validates its command format"
+            "Security PUSH user synchronization requires real-device evidence; "
+            "enable the lab capture switch only while validating this firmware"
         )
 
 

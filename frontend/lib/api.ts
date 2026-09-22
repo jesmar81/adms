@@ -188,6 +188,10 @@ class ApiClient {
     return this.get("/api/v1/devices", params);
   }
 
+  createDevice(body: Record<string, unknown>): Promise<Device> {
+    return this.request("/api/v1/devices", { method: "POST", body: JSON.stringify(body) });
+  }
+
   device(id: string): Promise<Device> {
     return this.request(`/api/v1/devices/${id}`);
   }
@@ -206,6 +210,13 @@ class ApiClient {
 
   attendance(params: Record<string, string> = {}): Promise<AttendanceRow[]> {
     return this.get("/api/v1/attendance", params);
+  }
+
+  resolveAttendanceAttribution(id: string, employmentId: string, reason: string): Promise<AttendanceRow> {
+    return this.request(`/api/v1/attendance/${id}/attribution`, {
+      method: "PUT",
+      body: JSON.stringify({ employment_id: employmentId, reason }),
+    });
   }
 
   dailyArrivals(params: Record<string, string>): Promise<DailyArrivalReport[]> {
@@ -410,6 +421,13 @@ class ApiClient {
 
   createEnrollmentRequest(body: Record<string, unknown>): Promise<EnrollmentRequest> {
     return this.request("/api/v1/enrollment-requests", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  updateEnrollmentRequest(id: string, body: Record<string, unknown>): Promise<EnrollmentRequest> {
+    return this.request(`/api/v1/enrollment-requests/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
   }
 
   deviceUsers(deviceId?: string): Promise<DeviceUser[]> {

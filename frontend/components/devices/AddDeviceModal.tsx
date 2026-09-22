@@ -1,69 +1,104 @@
 "use client";
 
-import { Fingerprint, Plus, RotateCw } from "lucide-react";
-import Link from "next/link";
-import { useMemo, useState } from "react";
+import { Fingerprint, Plus, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Field, Input, Select } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { api } from "@/lib/api";
+import type { Site } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function AddDeviceModal({ open, onClose, onRetry }: { open: boolean; onClose: () => void; onRetry: () => void }) {
+  const [sites, setSites] = useState<Site[]>([]);
+  const [serial, setSerial] = useState("");
+  const [name, setName] = useState("");
+  const [model, setModel] = useState("SpeedFace-V5L");
+  const [siteId, setSiteId] = useState("");
+  const [timezone, setTimezone] = useState("America/Mexico_City");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    void api.sites().then(setSites).catch(() => setSites([]));
+  }, [open]);
+
+  async function provision() {
+    const normalized = serial.trim();
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(normalized)) {
+      setError("El serial debe tener 1 a 64 caracteres: letras, números, guion o guion bajo.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.createDevice({
+        serial_number: normalized,
+        name: name.trim() || null,
+        model: model.trim() || null,
+        timezone,
+        site_id: siteId || null,
+      });
+      setSerial("");
+      setName("");
+      setSiteId("");
+      onRetry();
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No fue posible dar de alta el reloj.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Agregar un reloj"
-      description="Los relojes se registran solos al comunicarse con la plataforma. No necesitas crearlos manualmente."
+      title="Dar de alta un reloj"
+      description="Autoriza el número de serie antes de conectarlo. Un equipo desconocido será rechazado."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
-            Cerrar
+            Cancelar
           </Button>
           <Button
             variant="primary"
-            icon={<RotateCw className="h-4 w-4" aria-hidden />}
-            onClick={() => {
-              onRetry();
-              onClose();
-            }}
+            icon={<ShieldCheck className="h-4 w-4" aria-hidden />}
+            onClick={() => void provision()}
+            loading={saving}
+            disabled={!serial.trim()}
           >
-            Buscar de nuevo
+            Autorizar reloj
           </Button>
         </>
       }
     >
-      <ol className="flex flex-col gap-4 text-sm">
-        {[
-          {
-            title: "Apunta el reloj al servidor ADMS",
-            body: `En el menú del reloj (SpeedFace-V5LP): comunicación → servidor → ${API_URL}.`,
-          },
-          {
-            title: "Espera el primer registro",
-            body: "En cuanto el reloj envíe /iclock/registry aparecerá en la lista con estado inicial “Desconocido”.",
-          },
-          {
-            title: "Verifica la comunicación",
-            body: "Si no aparece, revisa que el reloj tenga red y que el servidor sea alcanzable desde su segmento.",
-          },
-        ].map((step, i) => (
-          <li key={step.title} className="flex gap-3.5">
-            <span
-              aria-hidden
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-semibold text-accent"
-            >
-              {i + 1}
-            </span>
-            <span>
-              <span className="block font-medium">{step.title}</span>
-              <span className="mt-0.5 block break-words text-[13px] leading-relaxed text-zinc-500">
-                {step.body}
-              </span>
-            </span>
-          </li>
-        ))}
-      </ol>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Número de serie">
+          {(id) => <Input id={id} value={serial} onChange={(event) => setSerial(event.target.value)} autoCapitalize="characters" placeholder="Ej. AEXX123456" />}
+        </Field>
+        <Field label="Nombre operativo">
+          {(id) => <Input id={id} value={name} onChange={(event) => setName(event.target.value)} placeholder="Acceso principal" />}
+        </Field>
+        <Field label="Modelo">
+          {(id) => <Input id={id} value={model} onChange={(event) => setModel(event.target.value)} />}
+        </Field>
+        <Field label="Sucursal">
+          {(id) => <Select id={id} value={siteId} onChange={(event) => setSiteId(event.target.value)}><option value="">Sin asignar</option>{sites.filter((site) => site.active).map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</Select>}
+        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Zona horaria">
+            {(id) => <Input id={id} value={timezone} onChange={(event) => setTimezone(event.target.value)} />}
+          </Field>
+        </div>
+      </div>
+      {error ? <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+      <p className="mt-4 rounded-xl bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-600">
+        Después del alta configura el servidor ADMS del reloj como <span className="font-mono">{API_URL}</span>. El estado cambiará cuando llegue su primera conexión real.
+      </p>
     </Modal>
   );
 }
@@ -88,7 +123,7 @@ export function NoDevicesEmpty({ onRetry }: { onRetry: () => void }) {
       </span>
       <h3 className="mt-4 text-[15px] font-semibold tracking-tight">Sin relojes registrados</h3>
       <p className="mt-1.5 max-w-sm text-sm text-zinc-500">
-        Apunta un SpeedFace-V5LP a /iclock/* y aparecerá aquí automáticamente.
+        Autoriza primero su número de serie y después conecta el SpeedFace al servidor ADMS.
       </p>
       <div className="mt-5">
         <AddDeviceButton onRetry={onRetry} />

@@ -42,7 +42,7 @@ export function Button({
   return (
     <button
       type={type}
-      disabled={disabled ?? loading}
+      disabled={Boolean(disabled || loading)}
       className={`inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-full font-medium transition-colors duration-200 disabled:cursor-not-allowed ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       {...rest}
     >

@@ -23,7 +23,7 @@ from app.models.user import Permission, Role, User
 from app.services import audit as audit_svc
 
 ADMIN_ROLE = "admin"
-MIN_PASSWORD_LENGTH = 10
+MIN_PASSWORD_LENGTH = 15
 
 
 def validate_admin_input(username: str, email: str, password: str) -> None:

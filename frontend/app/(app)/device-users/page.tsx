@@ -153,9 +153,6 @@ export default function Page() {
     }
   }
 
-  const selectedDevice = devices.find((device) => device.id === deviceId);
-  const isSecurityPush = String(selectedDevice?.options.DeviceType ?? "").toLowerCase() === "acc";
-
   return (
     <>
       <PageHeader
@@ -181,12 +178,12 @@ export default function Page() {
             </Field>
           </div>
           <Can permission="commands.execute">
-            <Button onClick={() => void queryUsers()} disabled={!deviceId || isSecurityPush}>
+            <Button onClick={() => void queryUsers()} disabled={!deviceId}>
               Consultar usuarios del reloj
             </Button>
           </Can>
         </div>
-        {isSecurityPush ? <p className="mt-3 text-xs leading-relaxed text-amber-700">La consulta de usuarios de este V5L permanece bloqueada hasta validar el intercambio Security PUSH de querydata/devicecmd con una captura real.</p> : null}
+        <p className="mt-3 text-xs leading-relaxed text-sky-800">Modo de validación activo: consulta, alta, cambio y baja quedan encolados para el reloj. Usa sólo un PIN de laboratorio y captura su respuesta.</p>
         <Can permission="device_users.write">
           <div className="mt-4 grid grid-cols-1 gap-2.5 border-t border-line-subtle pt-4 sm:grid-cols-[1fr_1fr_auto]">
             <Field label="PIN">

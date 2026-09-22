@@ -17,11 +17,12 @@ from app.adms.commands import (
     require_validated_user_command_profile,
 )
 from app.api.v1 import deps
-from app.api.v1.schemas import CommandIn, CommandOut, DeviceOut, DevicePatch
+from app.api.v1.schemas import CommandIn, CommandOut, DeviceCreate, DeviceOut, DevicePatch
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.device import AdmsPayload, Device, DeviceCommand, DeviceEvent
-from app.models.hr import Site
 from app.models.user import User
+from app.services import access as access_svc
 from app.services import audit as audit_svc
 from app.services import command as command_svc
 from app.services import device as device_svc
@@ -50,34 +51,92 @@ def _to_out(device: Device) -> DeviceOut:
     )
 
 
+@router.post("", response_model=DeviceOut, status_code=201)
+async def create_device(
+    payload: DeviceCreate,
+    user: User = Depends(deps.require_permission("devices.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> DeviceOut:
+    """Provision a serial number before accepting unauthenticated ADMS traffic."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        ZoneInfo(payload.timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Invalid timezone: {payload.timezone}"
+        ) from exc
+    if payload.site_id is not None:
+        await access_svc.require_site(session, user, payload.site_id)
+    elif not user.is_superuser:
+        raise HTTPException(status_code=422, detail="A scoped user must assign a branch")
+    existing = await device_svc.get_by_serial(session, payload.serial_number)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Serial number already provisioned")
+    try:
+        device, created = await device_svc.register_device(session, payload.serial_number)
+    except Exception:
+        await session.rollback()
+        raise
+    if not created:
+        raise HTTPException(status_code=409, detail="Serial number already provisioned")
+    device.name = payload.name
+    device.model = payload.model
+    device.timezone = payload.timezone
+    device.site_id = payload.site_id
+    # Provisioning is not device activity; it becomes online only when the
+    # physical terminal establishes a real ADMS connection.
+    device.last_activity_at = None
+    await audit_svc.record(
+        session,
+        action="device.provision",
+        user_id=user.id,
+        resource_type="device",
+        resource_id=device.id,
+        device_id=device.id,
+        request_id=rid,
+        metadata={
+            "serial_number": device.serial_number,
+            "site_id": str(device.site_id) if device.site_id else None,
+        },
+    )
+    await session.commit()
+    return _to_out(device)
+
+
 @router.get("", response_model=list[DeviceOut])
 async def list_devices(
     status: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
     offset: int = 0,
-    _user: User = Depends(deps.require_permission("devices.read")),
+    user: User = Depends(deps.require_permission("devices.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[DeviceOut]:
-    query = select(Device).order_by(Device.serial_number).limit(limit).offset(offset)
+    query = (
+        select(Device)
+        .where(Device.id.in_(await access_svc.device_ids(session, user)))
+        .order_by(Device.serial_number)
+        .limit(limit)
+        .offset(offset)
+    )
     if status:
         query = query.where(Device.status == status)
     result = await session.execute(query)
     return [_to_out(d) for d in result.scalars().all()]
 
 
-@router.get("/{device_id}", response_model=DeviceOut)
+@router.get("/{device_id:uuid}", response_model=DeviceOut)
 async def get_device(
     device_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("devices.read")),
+    user: User = Depends(deps.require_permission("devices.read")),
     session: AsyncSession = Depends(get_db),
 ) -> DeviceOut:
-    device = await session.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
+    device = await access_svc.require_device(session, user, device_id)
     return _to_out(device)
 
 
-@router.patch("/{device_id}", response_model=DeviceOut)
+@router.patch("/{device_id:uuid}", response_model=DeviceOut)
 async def patch_device(
     device_id: uuid.UUID,
     payload: DevicePatch,
@@ -88,9 +147,7 @@ async def patch_device(
     """Update name/model/timezone/status (M-02; `active` clears `disabled`)."""
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-    device = await session.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
+    device = await access_svc.require_device(session, user, device_id)
     changes: dict[str, object] = {}
     if payload.name is not None:
         device.name = payload.name
@@ -108,8 +165,7 @@ async def patch_device(
         device.timezone = payload.timezone
         changes["timezone"] = payload.timezone
     if payload.site_id is not None:
-        if await session.get(Site, payload.site_id) is None:
-            raise HTTPException(status_code=404, detail="Site not found")
+        await access_svc.require_site(session, user, payload.site_id)
         device.site_id = payload.site_id
         changes["site_id"] = str(payload.site_id)
     if payload.status is not None:
@@ -130,16 +186,14 @@ async def patch_device(
     return _to_out(device)
 
 
-@router.patch("/{device_id}/disable", response_model=DeviceOut)
+@router.patch("/{device_id:uuid}/disable", response_model=DeviceOut)
 async def disable_device(
     device_id: uuid.UUID,
     user: User = Depends(deps.require_permission("devices.write")),
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> DeviceOut:
-    device = await session.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
+    device = await access_svc.require_device(session, user, device_id)
     device.status = "disabled"
     await audit_svc.record(
         session,
@@ -155,13 +209,14 @@ async def disable_device(
     return _to_out(device)
 
 
-@router.get("/{device_id}/events")
+@router.get("/{device_id:uuid}/events")
 async def device_events(
     device_id: uuid.UUID,
     limit: int = Query(default=50, le=200),
-    _user: User = Depends(deps.require_permission("devices.read")),
+    user: User = Depends(deps.require_permission("devices.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
+    await access_svc.require_device(session, user, device_id)
     result = await session.execute(
         select(DeviceEvent)
         .where(DeviceEvent.device_id == device_id)
@@ -179,16 +234,14 @@ async def device_events(
     ]
 
 
-@router.get("/{device_id}/capabilities")
+@router.get("/{device_id:uuid}/capabilities")
 async def device_capabilities(
     device_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("devices.read")),
+    user: User = Depends(deps.require_permission("devices.read")),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Return evidence-based operations, never guessed firmware support."""
-    device = await session.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
+    device = await access_svc.require_device(session, user, device_id)
     payload_types = set(
         (
             await session.execute(
@@ -217,6 +270,11 @@ async def device_capabilities(
         "QUERYDATA:userinfo",
     }
     querydata_user_seen = any(item in payload_types for item in querydata_user_types)
+    allow_unvalidated = get_settings().zkteco_allow_unvalidated_user_commands
+    user_commands_allowed = not security_push or allow_unvalidated
+    safe_commands = ["INFO", "CHECK", "LOG", "GET_OPTION"]
+    if user_commands_allowed:
+        safe_commands.extend(["QUERY_USERINFO", "UPDATE_USERINFO", "DELETE_USERINFO"])
     return {
         "profile": "security_push_acc" if security_push else "legacy_adms",
         "firmware": device.firmware_version,
@@ -227,22 +285,27 @@ async def device_capabilities(
             "info_command": confirmed_info,
             "user_querydata_received": querydata_user_seen,
         },
-        "safe_commands": ["INFO", "CHECK", "LOG", "GET_OPTION"],
+        "safe_commands": safe_commands,
         "blocked_operations": (
-            ["user_import", "user_create", "user_update", "user_delete"]
-            if security_push and not querydata_user_seen
-            else []
+            []
+            if user_commands_allowed
+            else ["user_import", "user_create", "user_update", "user_delete"]
         ),
         "next_validation": (
-            "Capture a device-originated user query that posts /iclock/querydata; "
-            "do not use legacy USERINFO commands on this profile."
-            if security_push and not querydata_user_seen
+            "Activa temporalmente ZKTECO_ALLOW_UNVALIDATED_USER_COMMANDS durante una "
+            "captura supervisada y usa exclusivamente un PIN de laboratorio."
+            if security_push and not querydata_user_seen and not allow_unvalidated
+            else (
+                "Modo de validación activo: captura cada respuesta y usa sólo "
+                "un PIN de laboratorio."
+            )
+            if security_push and not querydata_user_seen and allow_unvalidated
             else None
         ),
     }
 
 
-@router.post("/{device_id}/commands", response_model=CommandOut, status_code=201)
+@router.post("/{device_id:uuid}/commands", response_model=CommandOut, status_code=201)
 async def queue_command(
     device_id: uuid.UUID,
     payload: CommandIn,
@@ -250,9 +313,7 @@ async def queue_command(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> CommandOut:
-    device = await session.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
+    device = await access_svc.require_device(session, user, device_id)
     try:
         ctype, wire = build_command(payload.command_type, payload.params)
     except ValueError as exc:
@@ -290,12 +351,13 @@ async def queue_command(
     )
 
 
-@router.get("/{device_id}/commands", response_model=list[CommandOut])
+@router.get("/{device_id:uuid}/commands", response_model=list[CommandOut])
 async def list_commands(
     device_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("commands.read")),
+    user: User = Depends(deps.require_permission("commands.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[CommandOut]:
+    await access_svc.require_device(session, user, device_id)
     result = await session.execute(
         select(DeviceCommand)
         .where(DeviceCommand.device_id == device_id)
@@ -321,7 +383,7 @@ async def list_commands(
 
 @router.get("/stats/summary")
 async def summary(
-    _user: User = Depends(deps.require_permission("devices.read")),
+    user: User = Depends(deps.require_permission("devices.read")),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
     from datetime import timedelta
@@ -330,22 +392,32 @@ async def summary(
 
     now = datetime.now(UTC)
     threshold = now - timedelta(seconds=get_settings().zkteco_online_threshold)
-    total = await session.scalar(select(func.count()).select_from(Device)) or 0
+    allowed = await access_svc.device_ids(session, user)
+    total = (
+        await session.scalar(select(func.count()).select_from(Device).where(Device.id.in_(allowed)))
+        or 0
+    )
     online = (
         await session.scalar(
-            select(func.count()).select_from(Device).where(Device.last_activity_at >= threshold)
+            select(func.count())
+            .select_from(Device)
+            .where(Device.id.in_(allowed), Device.last_activity_at >= threshold)
         )
         or 0
     )
     pending = (
         await session.scalar(
-            select(func.count()).select_from(DeviceCommand).where(DeviceCommand.status == "pending")
+            select(func.count())
+            .select_from(DeviceCommand)
+            .where(DeviceCommand.device_id.in_(allowed), DeviceCommand.status == "pending")
         )
         or 0
     )
     failed = (
         await session.scalar(
-            select(func.count()).select_from(DeviceCommand).where(DeviceCommand.status == "failed")
+            select(func.count())
+            .select_from(DeviceCommand)
+            .where(DeviceCommand.device_id.in_(allowed), DeviceCommand.status == "failed")
         )
         or 0
     )

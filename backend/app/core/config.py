@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     zkteco_trans_tables: str = Field(default="User Transaction")
     zkteco_realtime: int = Field(default=1)
     zkteco_push_timeout_s: int = Field(default=10)
+    # Production admission is explicit: an unknown serial number is rejected
+    # until an administrator provisions it through the authenticated API.
+    # Enable only in a controlled lab when discovering a new terminal.
+    zkteco_auto_register_unknown: bool = Field(default=False)
+    # Security PUSH USERINFO command dialects differ between firmware builds.
+    # This escape hatch is strictly for a supervised real-device capture.
+    zkteco_allow_unvalidated_user_commands: bool = Field(default=False)
+    # Unknown querydata can contain biometric templates under vendor-specific
+    # table names. Retaining it is therefore an explicit lab-only decision.
+    zkteco_retain_unknown_querydata: bool = Field(default=False)
 
     # --- JWT RS256 ---
     jwt_private_key: str = Field(default="")
@@ -91,6 +101,18 @@ class Settings(BaseSettings):
     # Required only by the sensitive-identifier endpoints; keep it in the
     # deployment secret manager, never in the database or repository.
     hr_pii_encryption_key: str = Field(default="")
+    # Rotation-ready key ring. The first key encrypts; every key can decrypt.
+    # Comma-separated Fernet keys. Falls back to the legacy single key above.
+    hr_pii_encryption_keys_raw: str = Field(default="")
+    # Independent high-entropy key for deterministic HMAC lookup digests.
+    hr_pii_lookup_key: str = Field(default="")
+
+    def hr_pii_encryption_keys(self) -> list[str]:
+        values = [value.strip() for value in self.hr_pii_encryption_keys_raw.split(",")]
+        values = [value for value in values if value]
+        return values or (
+            [self.hr_pii_encryption_key.strip()] if self.hr_pii_encryption_key.strip() else []
+        )
 
     # --- Proxy trust (comma-separated IPs/CIDRs allowed to set X-Forwarded-For) ---
     trusted_proxies_raw: str = Field(default="")

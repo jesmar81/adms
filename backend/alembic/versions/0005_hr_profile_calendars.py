@@ -44,9 +44,15 @@ CONSTRAINT uq_person_sensitive_identifiers_person UNIQUE (person_id)
 )
         """
     )
-    op.execute("CREATE INDEX ix_person_sensitive_identifiers_curp_hash ON person_sensitive_identifiers(curp_hash)")
-    op.execute("CREATE INDEX ix_person_sensitive_identifiers_rfc_hash ON person_sensitive_identifiers(rfc_hash)")
-    op.execute("CREATE INDEX ix_person_sensitive_identifiers_nss_hash ON person_sensitive_identifiers(nss_hash)")
+    op.execute(
+        "CREATE INDEX ix_person_sensitive_identifiers_curp_hash ON person_sensitive_identifiers(curp_hash)"
+    )
+    op.execute(
+        "CREATE INDEX ix_person_sensitive_identifiers_rfc_hash ON person_sensitive_identifiers(rfc_hash)"
+    )
+    op.execute(
+        "CREATE INDEX ix_person_sensitive_identifiers_nss_hash ON person_sensitive_identifiers(nss_hash)"
+    )
     op.execute(
         """
 CREATE TABLE holidays (

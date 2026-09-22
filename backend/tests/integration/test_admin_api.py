@@ -61,9 +61,35 @@ async def test_devices_list_get_disable_events(admin_client) -> None:  # type: i
     disabled = await admin_client.patch(f"/api/v1/devices/{device_id}/disable")
     assert disabled.status_code == 200
     assert disabled.json()["status"] == "disabled"
+    rejected = await admin_client.post(
+        "/iclock/cdata?SN=ADM001&table=ATTLOG",
+        content="1001\t2024-03-15 08:30:00\t0\t15\t",
+    )
+    assert rejected.status_code == 403
     assert (
         await admin_client.get("/api/v1/devices/00000000-0000-0000-0000-000000000000")
     ).status_code == 404
+
+
+async def test_unknown_device_requires_explicit_provisioning(
+    admin_client, settings, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "zkteco_auto_register_unknown", False)
+    unknown = await admin_client.post("/iclock/registry?SN=PROVISION1", content="DeviceType=acc")
+    assert unknown.status_code == 403
+    created = await admin_client.post(
+        "/api/v1/devices",
+        json={
+            "serial_number": "PROVISION1",
+            "name": "Laboratorio seguro",
+            "model": "SpeedFace-V5L",
+            "timezone": "America/Mexico_City",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["last_activity_at"] is None
+    connected = await admin_client.post("/iclock/registry?SN=PROVISION1", content="DeviceType=acc")
+    assert connected.status_code == 200
 
 
 async def test_queue_and_list_commands(admin_client) -> None:  # type: ignore[no-untyped-def]

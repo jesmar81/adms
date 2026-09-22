@@ -47,6 +47,10 @@ class DeviceLimitReachedError(AppError):
     status_code = 503
 
 
+class DeviceDisabledError(ForbiddenError):
+    code = "DEVICE_DISABLED"
+
+
 class CommandQueueFullError(AppError):
     code = "COMMAND_QUEUE_FULL"
     status_code = 409

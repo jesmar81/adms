@@ -88,6 +88,16 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"  # noqa: S105 — OAuth2 token type label, not a secret
 
 
+class DeviceCreate(BaseModel):
+    """Explicit allow-list provisioning for a physical terminal."""
+
+    serial_number: str = Field(min_length=1, max_length=100)
+    name: str | None = Field(default=None, max_length=150)
+    model: str | None = Field(default=None, max_length=100)
+    timezone: str = Field(default="America/Mexico_City", max_length=64)
+    site_id: uuid.UUID | None = None
+
+
 class DevicePatch(BaseModel):
     """Partial device administration (M-02). `status="active"` clears `disabled`."""
 
@@ -425,13 +435,17 @@ class EnrollmentRequestIn(BaseModel):
     employment_id: uuid.UUID
     device_id: uuid.UUID
     methods: list[str] = Field(min_length=1, max_length=4)
+    fingerprint_positions: list[str] = Field(default_factory=list, max_length=10)
+    consent_obtained: bool = False
+    consent_reference: str | None = Field(default=None, min_length=3, max_length=255)
     note: str | None = Field(default=None, max_length=2000)
 
 
 class EnrollmentRequestStatusIn(BaseModel):
     status: str = Field(
-        pattern="^(approved|awaiting_device_enrollment|verification_pending|completed|rejected|revoked)$"
+        pattern="^(identity_verified|approved|awaiting_device_enrollment|verification_pending|completed|rejected|revoked)$"
     )
+    verification_reference: str | None = Field(default=None, min_length=3, max_length=255)
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -440,10 +454,17 @@ class EnrollmentRequestOut(BaseModel):
     employment_id: uuid.UUID
     device_id: uuid.UUID
     methods: list[str]
+    fingerprint_positions: list[str] = Field(default_factory=list)
     status: str
     requested_by: uuid.UUID | None = None
     approved_by: uuid.UUID | None = None
     completed_by: uuid.UUID | None = None
+    identity_verified_by: uuid.UUID | None = None
+    identity_verified_at: datetime | None = None
+    identity_verification_reference: str | None = None
+    consent_recorded_by: uuid.UUID | None = None
+    consent_recorded_at: datetime | None = None
+    consent_reference: str | None = None
     note: str | None = None
 
     model_config = {"from_attributes": True}
@@ -480,8 +501,15 @@ class AttendanceOut(BaseModel):
     status: int
     verify_mode: int
     work_code: str | None = None
+    attribution_status: str = "unassigned"
+    employment_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
+
+
+class AttendanceAttributionIn(BaseModel):
+    employment_id: uuid.UUID
+    reason: str = Field(min_length=5, max_length=500)
 
 
 class DailyArrivalReportOut(BaseModel):

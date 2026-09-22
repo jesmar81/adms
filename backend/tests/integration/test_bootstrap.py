@@ -17,14 +17,14 @@ from app.services.bootstrap import (
 
 async def test_ensure_superuser_creates_admin(db_session) -> None:  # type: ignore[no-untyped-def]
     user, created = await ensure_superuser(
-        db_session, username="root", email="root@example.com", password="supersecret1"
+        db_session, username="root", email="root@example.com", password="enterprise-secret-1"
     )
     await db_session.commit()
     assert created is True
     assert user.is_superuser is True and user.is_active is True
     assert [r.name for r in user.roles] == ["admin"]
-    assert security.verify_password("supersecret1", user.password_hash)
-    assert "supersecret1" not in user.password_hash
+    assert security.verify_password("enterprise-secret-1", user.password_hash)
+    assert "enterprise-secret-1" not in user.password_hash
     admin_perms = {p.code for r in user.roles for p in r.permissions}
     assert admin_perms == set(PERMISSIONS)
     audit = await db_session.execute(select(AuditLog).where(AuditLog.action == "user.create"))
@@ -44,7 +44,7 @@ async def test_ensure_superuser_leaves_existing_untouched(db_session) -> None:  
     db_session.add(plain)
     await db_session.commit()
     user, created = await ensure_superuser(
-        db_session, username="root", email="other@example.com", password="supersecret1"
+        db_session, username="root", email="other@example.com", password="enterprise-secret-1"
     )
     await db_session.commit()
     assert created is False
@@ -57,12 +57,12 @@ async def test_ensure_superuser_leaves_existing_untouched(db_session) -> None:  
 
 def test_validate_admin_input_rejects() -> None:
     with pytest.raises(ValueError, match="username"):
-        validate_admin_input("ab", "a@b.co", "longpassword1")
+        validate_admin_input("ab", "a@b.co", "long-password-enterprise-1")
     with pytest.raises(ValueError, match="email"):
-        validate_admin_input("abc", "not-an-email", "longpassword1")
+        validate_admin_input("abc", "not-an-email", "long-password-enterprise-1")
     with pytest.raises(ValueError, match="password"):
         validate_admin_input("abc", "a@b.co", "short")
-    validate_admin_input("abc", "a@b.co", "longpassword1")  # no raise
+    validate_admin_input("abc", "a@b.co", "long-password-enterprise-1")  # no raise
 
 
 async def test_ensure_roles_permissions_idempotent(db_session) -> None:  # type: ignore[no-untyped-def]

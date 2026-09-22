@@ -28,7 +28,7 @@ from app.core.constants import (
     COMMAND_STATUS_PENDING,
     COMMAND_STATUS_SENT,
 )
-from app.core.exceptions import CommandQueueFullError, DeviceNotFoundError
+from app.core.exceptions import CommandQueueFullError, DeviceDisabledError, DeviceNotFoundError
 from app.models.device import Device, DeviceCommand
 from app.services import device as device_svc
 from app.services import events as event_svc
@@ -78,6 +78,8 @@ async def queue_command(
     payload: dict[str, Any] | None = None,
 ) -> DeviceCommand:
     device = await _get_device(session, serial)
+    if device.status == "disabled":
+        raise DeviceDisabledError(f"Device is disabled: {serial!r}")
     limit = get_settings().zkteco_max_commands_per_device
     if limit > 0 and await pending_count(session, device) >= limit:
         raise CommandQueueFullError(f"Command queue full for device {serial} (limit: {limit})")

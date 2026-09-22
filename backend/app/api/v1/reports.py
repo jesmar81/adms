@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,7 +24,7 @@ from app.api.v1.schemas import (
     WeeklyCardReportOut,
 )
 from app.core.database import get_db
-from app.models.device import AttendanceLog, DeviceUser
+from app.models.device import AttendanceAttribution, AttendanceLog
 from app.models.hr import (
     Address,
     AttendanceAdjustment,
@@ -38,6 +38,7 @@ from app.models.hr import (
     WorkSchedule,
 )
 from app.models.user import User
+from app.services import access as access_svc
 from app.services import audit as audit_svc
 
 reports_router = APIRouter(prefix="/reports", tags=["reports"])
@@ -79,6 +80,7 @@ async def _data(
     group_id: uuid.UUID | None = None,
     person_id: uuid.UUID | None = None,
     employment_id: uuid.UUID | None = None,
+    allowed_company_ids: set[uuid.UUID] | None = None,
 ) -> tuple[
     list[tuple[Employment, Person, Company]],
     dict[uuid.UUID, list[ScheduleAssignment]],
@@ -93,8 +95,6 @@ async def _data(
         .join(Person, Employment.person_id == Person.id)
         .join(Company, Employment.company_id == Company.id)
         .where(
-            Person.active.is_(True),
-            Employment.active.is_(True),
             Employment.started_on <= end,
             Employment.ended_on.is_(None) | (Employment.ended_on >= start),
         )
@@ -104,6 +104,8 @@ async def _data(
     )
     if company_id:
         query = query.where(Employment.company_id == company_id)
+    if allowed_company_ids is not None:
+        query = query.where(Employment.company_id.in_(allowed_company_ids))
     if group_id:
         query = query.where(Company.corporate_group_id == group_id)
     if person_id:
@@ -114,7 +116,6 @@ async def _data(
     employment_ids = [item[0].id for item in workers]
     if not employment_ids:
         return [], {}, {}, {}, set(), {}, {}
-    person_ids = list({item[1].id for item in workers})
     company_ids = list({item[2].id for item in workers})
     assignments_rows = list(
         (
@@ -145,12 +146,15 @@ async def _data(
     )
     slots: dict[uuid.UUID, list[ScheduleSlot]] = defaultdict(list)
     if schedule_ids:
-        for item in (
-            await session.execute(
-                select(ScheduleSlot).where(ScheduleSlot.work_schedule_id.in_(schedule_ids))
-            )
-        ).scalars():
-            slots[item.work_schedule_id].append(item)
+        slot_rows: list[ScheduleSlot] = list(
+            (
+                await session.execute(
+                    select(ScheduleSlot).where(ScheduleSlot.work_schedule_id.in_(schedule_ids))
+                )
+            ).scalars()
+        )
+        for slot in slot_rows:
+            slots[slot.work_schedule_id].append(slot)
     holidays = {
         (item.company_id, item.holiday_date)
         for item in (
@@ -179,18 +183,22 @@ async def _data(
     mark_start = datetime.combine(start, time.min, tzinfo=UTC) - timedelta(hours=14)
     mark_end = datetime.combine(end + timedelta(days=1), time.min, tzinfo=UTC) + timedelta(hours=14)
     rows = await session.execute(
-        select(AttendanceLog.recorded_at, DeviceUser.person_id)
-        .join(DeviceUser, AttendanceLog.device_user_id == DeviceUser.id)
+        select(AttendanceLog.recorded_at, AttendanceAttribution.employment_id)
+        .join(
+            AttendanceAttribution,
+            AttendanceAttribution.attendance_log_id == AttendanceLog.id,
+        )
         .where(
-            DeviceUser.person_id.in_(person_ids),
+            AttendanceAttribution.status == "assigned",
+            AttendanceAttribution.employment_id.in_(employment_ids),
             AttendanceLog.recorded_at >= mark_start,
             AttendanceLog.recorded_at < mark_end,
         )
         .order_by(AttendanceLog.recorded_at)
     )
-    for recorded_at, mark_person_id in rows.tuples():
-        if mark_person_id:
-            marks[mark_person_id].append(recorded_at)
+    for recorded_at, mark_employment_id in rows.tuples():
+        if mark_employment_id:
+            marks[mark_employment_id].append(recorded_at)
     return workers, assignments, schedules, slots, holidays, marks, adjustments
 
 
@@ -288,7 +296,7 @@ def _day(
 ) -> WeeklyCardDayOut:
     expected = _bounds(employment, report_day, assignments, schedules, slots, holidays)
     entry, meal_out, meal_in, exit_at = _events(marks, adjustment)
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "report_date": report_day,
         "entry_at": entry,
         "meal_out_at": meal_out,
@@ -302,17 +310,21 @@ def _day(
         if report_day < employment.started_on or (
             employment.ended_on and report_day > employment.ended_on
         ):
-            return WeeklyCardDayOut(day_kind="FUERA DE VIGENCIA", **kwargs)
-        return WeeklyCardDayOut(
-            day_kind="FERIADO" if (employment.company_id, report_day) in holidays else "DESCANSO",
-            **kwargs,
+            return WeeklyCardDayOut.model_validate({"day_kind": "FUERA DE VIGENCIA", **kwargs})
+        return WeeklyCardDayOut.model_validate(
+            {
+                "day_kind": "FERIADO"
+                if (employment.company_id, report_day) in holidays
+                else "DESCANSO",
+                **kwargs,
+            }
         )
     expected_entry, expected_exit, tolerance = expected
     if adjustment and adjustment.absence_kind:
         absence_label = "JUSTIFICADA" if adjustment.absence_kind == "justified" else "INJUSTIFICADA"
-        return WeeklyCardDayOut(day_kind=f"FALTA {absence_label}", **kwargs)
+        return WeeklyCardDayOut.model_validate({"day_kind": f"FALTA {absence_label}", **kwargs})
     if entry is None:
-        return WeeklyCardDayOut(day_kind="FALTA INJUSTIFICADA", **kwargs)
+        return WeeklyCardDayOut.model_validate({"day_kind": "FALTA INJUSTIFICADA", **kwargs})
     late = max(0, int((entry - expected_entry).total_seconds() // 60) - tolerance)
     early = (
         max(0, int((expected_exit - exit_at).total_seconds() // 60))
@@ -328,8 +340,13 @@ def _day(
         if early
         else "LABORAL"
     )
-    return WeeklyCardDayOut(
-        day_kind=kind, late_minutes=late, early_departure_minutes=early, **kwargs
+    return WeeklyCardDayOut.model_validate(
+        {
+            "day_kind": kind,
+            "late_minutes": late,
+            "early_departure_minutes": early,
+            **kwargs,
+        }
     )
 
 
@@ -383,20 +400,25 @@ def _card(
 ) -> WeeklyCardReportOut:
     employment, person, company = worker
     site_name, address = locations.get(employment.id, (None, None))
-    timezone = ZoneInfo(company.timezone)
-    days = [
-        _day(
-            employment,
-            week_start + timedelta(days=offset),
-            assignments.get(employment.id, []),
-            schedules,
-            slots,
-            holidays,
-            _local_marks(marks.get(person.id, []), week_start + timedelta(days=offset), timezone),
-            adjustments.get((employment.id, week_start + timedelta(days=offset))),
+    employment_assignments = assignments.get(employment.id, [])
+    days: list[WeeklyCardDayOut] = []
+    for offset in range(7):
+        report_day = week_start + timedelta(days=offset)
+        assignment = _assignment(employment_assignments, report_day)
+        schedule = schedules.get(assignment.work_schedule_id) if assignment else None
+        timezone = ZoneInfo(schedule.timezone if schedule else company.timezone)
+        days.append(
+            _day(
+                employment,
+                report_day,
+                employment_assignments,
+                schedules,
+                slots,
+                holidays,
+                _local_marks(marks.get(employment.id, []), report_day, timezone),
+                adjustments.get((employment.id, report_day)),
+            )
         )
-        for offset in range(7)
-    ]
     return WeeklyCardReportOut(
         employment_id=employment.id,
         person_id=person.id,
@@ -415,11 +437,16 @@ def _card(
 async def daily_arrivals(
     company_id: uuid.UUID,
     report_date: date = Query(default_factory=date.today),
-    _user: User = Depends(deps.require_permission("attendance.read")),
+    user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[DailyArrivalReportOut]:
+    await access_svc.require_company(session, user, company_id)
     workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
-        session, report_date, report_date, company_id=company_id
+        session,
+        report_date,
+        report_date,
+        company_id=company_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
     )
     result: list[DailyArrivalReportOut] = []
     for employment, person, company in workers:
@@ -428,7 +455,7 @@ async def daily_arrivals(
         )
         timezone = expected[0].tzinfo if expected else ZoneInfo(company.timezone)
         entry, _, _, _ = _events(
-            _local_marks(marks.get(person.id, []), report_date, timezone or UTC),
+            _local_marks(marks.get(employment.id, []), report_date, timezone or UTC),
             adjustments.get((employment.id, report_date)),
         )
         if entry:
@@ -442,7 +469,7 @@ async def daily_arrivals(
                     report_date=report_date,
                     first_mark_at=entry,
                     mark_count=len(
-                        _local_marks(marks.get(person.id, []), report_date, timezone or UTC)
+                        _local_marks(marks.get(employment.id, []), report_date, timezone or UTC)
                     ),
                 )
             )
@@ -453,11 +480,16 @@ async def daily_arrivals(
 async def absences(
     company_id: uuid.UUID,
     report_date: date = Query(default_factory=date.today),
-    _user: User = Depends(deps.require_permission("attendance.read")),
+    user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[AbsenceReportOut]:
+    await access_svc.require_company(session, user, company_id)
     workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
-        session, report_date, report_date, company_id=company_id
+        session,
+        report_date,
+        report_date,
+        company_id=company_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
     )
     result: list[AbsenceReportOut] = []
     for employment, person, company in workers:
@@ -468,7 +500,7 @@ async def absences(
             continue
         adjustment = adjustments.get((employment.id, report_date))
         entry, _, _, _ = _events(
-            _local_marks(marks.get(person.id, []), report_date, expected[0].tzinfo or UTC),
+            _local_marks(marks.get(employment.id, []), report_date, expected[0].tzinfo or UTC),
             adjustment,
         )
         if entry is None or adjustment and adjustment.absence_kind:
@@ -491,19 +523,24 @@ async def weekly_card(
     week_start: date,
     employment_id: uuid.UUID | None = None,
     person_id: uuid.UUID | None = None,
-    _user: User = Depends(deps.require_permission("attendance.read")),
+    user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> WeeklyCardReportOut:
     if week_start.weekday() != 0:
         raise HTTPException(status_code=422, detail="week_start must be a Monday")
     if employment_id is None and person_id is None:
         raise HTTPException(status_code=422, detail="employment_id or person_id is required")
+    if employment_id is not None:
+        await access_svc.require_employment(session, user, employment_id)
+    if person_id is not None:
+        await access_svc.require_person(session, user, person_id)
     workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
         session,
         week_start,
         week_start + timedelta(days=6),
         person_id=person_id,
         employment_id=employment_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
     )
     if not workers:
         raise HTTPException(status_code=404, detail="Worker not found or inactive in this week")
@@ -526,13 +563,18 @@ async def punctuality(
     date_from: date,
     date_to: date,
     mode: Literal["both", "late", "early"] = "both",
-    _user: User = Depends(deps.require_permission("attendance.read")),
+    user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[PunctualityReportOut]:
     if date_to < date_from or (date_to - date_from).days > 366:
         raise HTTPException(status_code=422, detail="Use an ordered range of at most 366 days")
+    await access_svc.require_company(session, user, company_id)
     workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
-        session, date_from, date_to, company_id=company_id
+        session,
+        date_from,
+        date_to,
+        company_id=company_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
     )
     result: list[PunctualityReportOut] = []
     day = date_from
@@ -545,7 +587,8 @@ async def punctuality(
             if expected is None or adjustment and adjustment.absence_kind:
                 continue
             entry, _, _, exit_at = _events(
-                _local_marks(marks.get(person.id, []), day, expected[0].tzinfo or UTC), adjustment
+                _local_marks(marks.get(employment.id, []), day, expected[0].tzinfo or UTC),
+                adjustment,
             )
             if entry is None:
                 continue
@@ -605,9 +648,10 @@ async def list_adjustments(
     employment_id: uuid.UUID,
     date_from: date,
     date_to: date,
-    _user: User = Depends(deps.require_permission("attendance.read")),
+    user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[AttendanceAdjustment]:
+    await access_svc.require_employment(session, user, employment_id)
     return list(
         (
             await session.execute(
@@ -632,8 +676,7 @@ async def save_adjustment(
     rid: str = Depends(deps.request_id),
 ) -> AttendanceAdjustment:
     _validate_adjustment(payload)
-    if await session.get(Employment, employment_id) is None:
-        raise HTTPException(status_code=404, detail="Employment not found")
+    await access_svc.require_employment(session, user, employment_id)
     row = await session.scalar(
         select(AttendanceAdjustment).where(
             AttendanceAdjustment.employment_id == employment_id,
@@ -780,8 +823,9 @@ async def weekly_cards_pdf(
     company_id: uuid.UUID | None = None,
     corporate_group_id: uuid.UUID | None = None,
     employment_id: uuid.UUID | None = None,
-    _user: User = Depends(deps.require_permission("attendance.export")),
+    user: User = Depends(deps.require_permission("attendance.export")),
     session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
 ) -> Response:
     if week_start.weekday() != 0:
         raise HTTPException(status_code=422, detail="week_start must be a Monday")
@@ -789,6 +833,12 @@ async def weekly_cards_pdf(
         raise HTTPException(
             status_code=422, detail="Select exactly one company, group or employment"
         )
+    if company_id is not None:
+        await access_svc.require_company(session, user, company_id)
+    if corporate_group_id is not None:
+        await access_svc.require_group(session, user, corporate_group_id)
+    if employment_id is not None:
+        await access_svc.require_employment(session, user, employment_id)
     workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
         session,
         week_start,
@@ -796,9 +846,10 @@ async def weekly_cards_pdf(
         company_id=company_id,
         group_id=corporate_group_id,
         employment_id=employment_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
     )
     if not workers:
-        raise HTTPException(status_code=404, detail="No active workers found for this selection")
+        raise HTTPException(status_code=404, detail="No workers found for this selection and week")
     locations = await _locations(session, workers)
     cards = [
         _card(
@@ -814,6 +865,21 @@ async def weekly_cards_pdf(
         )
         for worker in workers
     ]
+    await audit_svc.record(
+        session,
+        action="attendance.weekly_cards.export",
+        user_id=user.id,
+        resource_type="attendance_report",
+        request_id=rid,
+        metadata={
+            "week_start": week_start.isoformat(),
+            "company_id": str(company_id) if company_id else None,
+            "corporate_group_id": str(corporate_group_id) if corporate_group_id else None,
+            "employment_id": str(employment_id) if employment_id else None,
+            "card_count": len(cards),
+        },
+    )
+    await session.commit()
     return Response(
         content=_pdf(cards),
         media_type="application/pdf",

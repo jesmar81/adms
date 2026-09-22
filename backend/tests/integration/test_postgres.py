@@ -246,6 +246,7 @@ async def test_pg_concurrent_register_limit(pg_engine, settings, monkeypatch) ->
 
 async def test_pg_seed_on_migrated_schema(pg_engine, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from app.core.config import get_settings
+    from app.core.constants import PERMISSIONS
     from app.models.user import Permission, Role
     from app.seed import main
 
@@ -258,4 +259,4 @@ async def test_pg_seed_on_migrated_schema(pg_engine, monkeypatch) -> None:  # ty
         role_count = await session.scalar(select(func.count()).select_from(Role))
         perm_count = await session.scalar(select(func.count()).select_from(Permission))
     assert role_count == 3
-    assert perm_count == 14
+    assert perm_count == len(PERMISSIONS)

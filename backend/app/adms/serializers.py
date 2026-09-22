@@ -111,9 +111,7 @@ def wire_security_push_config(**kwargs: Unpack[SecurityPushConfig]) -> str:
     return "\r\n".join(_security_push_lines(**kwargs)) + "\r\n"
 
 
-def wire_security_push_options(
-    *, registry_code: str, **kwargs: Unpack[SecurityPushConfig]
-) -> str:
+def wire_security_push_options(*, registry_code: str, **kwargs: Unpack[SecurityPushConfig]) -> str:
     """Configuration returned to a registered ACC device at ``cdata``."""
     lines = ["registry=ok", f"RegistryCode={registry_code}", *_security_push_lines(**kwargs)]
     return "\r\n".join(lines) + "\r\n"

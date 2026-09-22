@@ -11,9 +11,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TABLE person_sensitive_identifiers ADD COLUMN fiscal_name_encrypted TEXT NULL")
+    op.execute(
+        "ALTER TABLE person_sensitive_identifiers ADD COLUMN fiscal_name_encrypted TEXT NULL"
+    )
     op.execute("ALTER TABLE person_sensitive_identifiers ADD COLUMN tax_regime_encrypted TEXT NULL")
-    op.execute("ALTER TABLE person_sensitive_identifiers ADD COLUMN fiscal_postal_code_encrypted TEXT NULL")
+    op.execute(
+        "ALTER TABLE person_sensitive_identifiers ADD COLUMN fiscal_postal_code_encrypted TEXT NULL"
+    )
     op.execute("ALTER TABLE employments ADD COLUMN site_id UUID NULL")
     op.execute("ALTER TABLE employments ADD COLUMN employment_relation_type VARCHAR(80) NULL")
     op.execute("ALTER TABLE employments ADD COLUMN job_category VARCHAR(100) NULL")
@@ -59,6 +63,12 @@ def downgrade() -> None:
         "site_id",
     ):
         op.execute(f"ALTER TABLE employments DROP COLUMN IF EXISTS {column}")
-    op.execute("ALTER TABLE person_sensitive_identifiers DROP COLUMN IF EXISTS fiscal_postal_code_encrypted")
-    op.execute("ALTER TABLE person_sensitive_identifiers DROP COLUMN IF EXISTS tax_regime_encrypted")
-    op.execute("ALTER TABLE person_sensitive_identifiers DROP COLUMN IF EXISTS fiscal_name_encrypted")
+    op.execute(
+        "ALTER TABLE person_sensitive_identifiers DROP COLUMN IF EXISTS fiscal_postal_code_encrypted"
+    )
+    op.execute(
+        "ALTER TABLE person_sensitive_identifiers DROP COLUMN IF EXISTS tax_regime_encrypted"
+    )
+    op.execute(
+        "ALTER TABLE person_sensitive_identifiers DROP COLUMN IF EXISTS fiscal_name_encrypted"
+    )

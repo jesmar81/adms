@@ -50,3 +50,42 @@ def test_jwt_tampered_rejected() -> None:
     pair = security.create_token_pair("user-1")
     with pytest.raises(AuthError):
         security.decode_token(pair["access_token"] + "tamper", security.ACCESS_TYPE)
+
+
+def test_adms_payload_query_params_redact_secrets() -> None:
+    from starlette.requests import Request
+
+    from app.adms.router import _safe_query_params
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/iclock/querydata",
+            "query_string": b"SN=DEVICE-1&table=userinfo&token=never-store&Password=also-secret",
+            "headers": [],
+        }
+    )
+    assert _safe_query_params(request) == {
+        "SN": "DEVICE-1",
+        "table": "userinfo",
+        "token": "***",
+        "Password": "***",
+    }
+
+
+def test_device_stats_route_is_not_captured_by_uuid_route() -> None:
+    from starlette.routing import Match
+
+    from app.api.v1.devices import router
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/devices/stats/summary",
+        "headers": [],
+    }
+    matched = [route for route in router.routes if route.matches(scope)[0] is Match.FULL]
+    assert len(matched) == 1
+    assert matched[0].endpoint.__name__ == "summary"

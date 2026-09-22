@@ -244,6 +244,7 @@ class Employment(Base, UUIDPKMixin, TimestampMixin):
         UniqueConstraint("company_id", "employee_number", name="uq_employments_company_number"),
         Index("ix_employments_person", "person_id"),
         Index("ix_employments_company", "company_id"),
+        Index("ix_employments_site", "site_id"),
     )
 
 
@@ -358,6 +359,12 @@ class ScheduleAssignment(Base, UUIDPKMixin, TimestampMixin):
             name="ck_schedule_assignments_date_range",
         ),
         Index("ix_schedule_assignments_employment", "employment_id"),
+        Index(
+            "uq_schedule_assignments_one_current_employment",
+            "employment_id",
+            unique=True,
+            postgresql_where=active.is_(True) & effective_to.is_(None),
+        ),
     )
 
 
@@ -418,11 +425,25 @@ class EnrollmentRequest(Base, UUIDPKMixin, TimestampMixin):
     completed_by: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    identity_verified_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    identity_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    identity_verification_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    consent_recorded_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    consent_recorded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consent_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('requested','approved','awaiting_device_enrollment',"
+            "status IN ('requested','identity_verified','approved','awaiting_device_enrollment',"
             "'verification_pending','completed','rejected','revoked')",
             name="ck_enrollment_requests_status",
         ),

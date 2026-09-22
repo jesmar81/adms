@@ -20,6 +20,9 @@ os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_db_path}")
 os.environ.setdefault("JWT_PRIVATE_KEY_FILE", _priv)
 os.environ.setdefault("JWT_PUBLIC_KEY_FILE", _pub)
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
+# Existing protocol tests exercise device-originated discovery. Production is
+# secure-by-default and provisions serials explicitly through the admin API.
+os.environ.setdefault("ZKTECO_AUTO_REGISTER_UNKNOWN", "true")
 
 
 def _write_test_keys() -> None:

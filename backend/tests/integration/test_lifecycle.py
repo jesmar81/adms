@@ -214,9 +214,7 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
 
     monkeypatch.setattr(settings, "hr_pii_encryption_key", Fernet.generate_key().decode())
     group = (
-        await life_client.post(
-            "/api/v1/corporate-groups", json={"name": "Grupo", "code": "GRP"}
-        )
+        await life_client.post("/api/v1/corporate-groups", json={"name": "Grupo", "code": "GRP"})
     ).json()
     company = (
         await life_client.post(

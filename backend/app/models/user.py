@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
@@ -20,7 +20,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
-from app.models.types import INET, JSONBVariant
+from app.models.types import GUID, INET, JSONBVariant
+
+if TYPE_CHECKING:
+    from app.models.hr import Company, CorporateGroup
 
 user_roles = Table(
     "user_roles",
@@ -34,6 +37,25 @@ role_permissions = Table(
     Base.metadata,
     Column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
     Column("permission_id", ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+)
+
+user_group_scopes = Table(
+    "user_group_scopes",
+    Base.metadata,
+    Column("user_id", GUID(), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "corporate_group_id",
+        GUID(),
+        ForeignKey("corporate_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+user_company_scopes = Table(
+    "user_company_scopes",
+    Base.metadata,
+    Column("user_id", GUID(), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("company_id", GUID(), ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
@@ -50,6 +72,10 @@ class User(Base, UUIDPKMixin, TimestampMixin):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     roles: Mapped[list[Role]] = relationship(secondary=user_roles, back_populates="users")
+    corporate_group_scopes: Mapped[list[CorporateGroup]] = relationship(
+        "CorporateGroup", secondary=user_group_scopes
+    )
+    company_scopes: Mapped[list[Company]] = relationship("Company", secondary=user_company_scopes)
 
     __table_args__ = (
         UniqueConstraint("username", name="uq_users_username"),

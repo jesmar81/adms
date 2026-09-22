@@ -113,7 +113,7 @@ async def test_operator_subset_role_grant(cov_client, db_session) -> None:  # ty
             json={
                 "username": "zed1",
                 "email": "z1@example.com",
-                "password": "longpassword1",
+                "password": "long-password-enterprise-1",
                 "role_names": ["limited"],
             },
             headers=headers,
@@ -132,7 +132,12 @@ async def test_users_edge_cases(cov_client) -> None:  # type: ignore[no-untyped-
     gone = await cov_client.delete(f"{base}/00000000-0000-0000-0000-000000000000")
     assert gone.status_code == 404
     created = await cov_client.post(
-        base, json={"username": "edge", "email": "edge@example.com", "password": "longpassword1"}
+        base,
+        json={
+            "username": "edge",
+            "email": "edge@example.com",
+            "password": "long-password-enterprise-1",
+        },
     )
     uid = created.json()["id"]
     assert (await cov_client.patch(f"{base}/{uid}", json={"email": "bad"})).status_code == 422
@@ -149,7 +154,7 @@ async def test_users_edge_cases(cov_client) -> None:  # type: ignore[no-untyped-
         json={
             "username": "edge2",
             "email": "edge2@example.com",
-            "password": "longpassword1",
+            "password": "long-password-enterprise-1",
             "is_superuser": True,
         },
     )

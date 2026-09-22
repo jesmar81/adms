@@ -15,12 +15,12 @@ Estado: remediación 2026-09-10 (ver REMEDIATION_REPORT.md).
   tipos `access` (15 min) / `refresh` (7 días). Validar firma, issuer,
   audience, expiración, tipo y algoritmo (rechazar `alg=none`/HS256 →
   anti-confusion, §79).
-- Refresh con revocación en **Redis compartido** por `jti` (§51, sin fallback
-  local): `logout` revoca access+refresh (terminación efectiva de sesión);
-  rotación del refresh en cada uso; expiración como respaldo. Nunca confiar
-  solo en `exp`. **Sin Redis, auth responde 503 (fail-closed)** — Redis es
-  dependencia dura de autenticación.
-- Passwords **Argon2id** (§50) en `users.password_hash` (mín. 10 caracteres en
+- Refresh con sesión activa en **Redis compartido** por `jti` (§51, sin fallback
+  local): cada token se consume atómicamente con `GETDEL` y rota una sola vez;
+  un reinicio/pérdida de Redis invalida sesiones en vez de resucitar JWT
+  antiguos. `logout` termina access+refresh. **Sin Redis, auth responde 503
+  (fail-closed)**.
+- Passwords **Argon2id** (§50) en `users.password_hash` (mín. 15 caracteres en
   API/CLI). Nada en claro. Bootstrap solo vía `python -m app.cli
   createsuperuser` (getpass/env, auditado); gestión vía `/api/v1/users` con
   guardas (sin auto-escalado, sin auto-borrado, último superuser protegido).
@@ -31,7 +31,14 @@ Estado: remediación 2026-09-10 (ver REMEDIATION_REPORT.md).
 
 ## 2. ADMS (§27–28, §52–53, §80–81)
 
-- Sin JWT; identificación por `SN` validado `^[A-Za-z0-9_-]{1,64}$`.
+- Sin JWT; `SN` validado `^[A-Za-z0-9_-]{1,64}$` y admitido sólo si fue dado
+  de alta por un administrador. `ZKTECO_AUTO_REGISTER_UNKNOWN=true` es una
+  excepción exclusiva para laboratorio. Un reloj deshabilitado no ingiere
+  datos ni recibe comandos.
+- El cuerpo se limita mientras se transmite (no después de cargarlo en
+  memoria). Los payloads conservan sólo cabeceras diagnósticas permitidas;
+  nunca cookies ni `Authorization`. `querydata` desconocido se redacta por
+  defecto porque algunos firmwares usan nombres no estándar para biometría.
 - Comandos solo whitelist vía `CommandType` + `CommandBuilder` con parámetros
   validados (§80). Frontend jamás envía texto libre al reloj.
 - CRLF: cualquier campo hacia el wire con `\r`/`\n` → rechazo (§81).
@@ -46,10 +53,15 @@ Estado: remediación 2026-09-10 (ver REMEDIATION_REPORT.md).
 
 ## 3. Autorización y auditoría (§63, §91)
 
-Cada endpoint `/api/v1/*` exige usuario autenticado **+ permiso** (`devices.read`…).
-401 sin token / 403 sin permiso. Modelo single-tenant asumido: no hay
-autorización por objeto/fila (cualquier holder del permiso accede a cualquier
-UUID); documentado como decisión, no como IDOR.
+Cada endpoint `/api/v1/*` exige usuario autenticado **+ permiso** (`devices.read`…)
+**+ alcance de negocio**. `user_group_scopes` concede un grupo completo;
+`user_company_scopes`, únicamente empresas concretas. Un alcance de empresa
+permite navegar el grupo padre, pero no ver trabajadores de empresas hermanas
+ni delegar el grupo completo. Personas, empleos, sucursales, relojes,
+comandos, horarios, enrolamientos, nómina, checadas y reportes validan ese
+alcance y responden 404 para objetos ajenos.
+Los identificadores CURP/RFC/NSS/CFDI requieren permisos separados
+`people.sensitive.read/write`; sus lecturas se auditan.
 Toda acción relevante → `audit_logs` con `user_id, action, resource, device_id,
 ip, user_agent, request_id` (§23): `login[.failed]`, `logout`, `user.*`,
 `device.update`, `device.command`, `device_user.*`. IPs de auditoría usan el
@@ -60,7 +72,8 @@ peer directo salvo proxies configurados en `TRUSTED_PROXIES_RAW`.
 - TLS terminating reverse-proxy en producción (el backend no termina TLS).
   HSTS solo con `HSTS_ENABLED=true` (tras el proxy). App envía
   `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, `X-Request-ID`.
-  CSP y resto de cabinas, en el proxy (ver `docker-compose.yml` + despliegue).
+  El frontend aplica CSP, `Permissions-Policy`, anti-framing y nosniff; el
+  proxy puede endurecer `script-src` con nonce durante el despliegue.
 - CORS: solo orígenes explícitos `FRONTEND_ORIGINS_RAW` (nunca `*` + credenciales);
   vacío = sin CORS (fail-closed para navegadores).
 - Tokens del frontend **solo en memoria** (sin localStorage/sessionStorage):
@@ -85,6 +98,7 @@ peer directo salvo proxies configurados en `TRUSTED_PROXIES_RAW`.
 - [x] JWT confusion/replay/refresh abuse (tests incl. rotación y logout total)
 - [x] Rate limiting (Redis + tests 429/lockout/fail-closed/fail-open)
 - [x] Priv-esc / self-target / último-admin (tests RBAC + guards)
-- [ ] Spoofing de serial (sin secreto compartido en MVP → documentado;
-      endurecer con allowlist/IP si el despliegue lo permite)
+- [~] Spoofing de serial: alta explícita y bloqueo de seriales desconocidos;
+      la red ADMS aún debe aislarse por VPN/firewall porque el protocolo del
+      fabricante no ofrece una identidad criptográfica suficiente.
 - [x] Audit bypass (emisión testeada en login/comandos/usuarios/dispositivos)

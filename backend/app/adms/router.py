@@ -53,10 +53,21 @@ def _utcnow() -> datetime:
 # raw bodies keep full troubleshooting value with secrets redacted. The
 # SHA-256 is computed over the ORIGINAL bytes for integrity correlation.
 _PASSWORD_RE = re.compile(r"(Password=)[^\t\r\n&]*")
+_SENSITIVE_QUERY_KEY_RE = re.compile(
+    r"(?:pass(?:word)?|token|secret|auth(?:orization)?|cookie|session)", re.IGNORECASE
+)
 
 
 def _redact_secrets(text: str) -> str:
     return _PASSWORD_RE.sub(r"\1***", text)
+
+
+def _safe_query_params(request: Request) -> dict[str, str]:
+    """Retain bounded protocol diagnostics without persisting URL secrets."""
+    return {
+        key[:100]: "***" if _SENSITIVE_QUERY_KEY_RE.search(key) else value[:512]
+        for key, value in request.query_params.multi_items()
+    }
 
 
 def _sn_or_error(request: Request) -> str | PlainTextResponse:
@@ -68,25 +79,43 @@ def _sn_or_error(request: Request) -> str | PlainTextResponse:
     return sn
 
 
-def _body_too_large(request: Request, body: bytes) -> bool:
+async def _read_bounded_body(request: Request) -> bytes | PlainTextResponse:
+    """Read at most the configured limit without buffering an oversized body."""
     limit = get_settings().zkteco_max_body_size
     declared = request.headers.get("content-length")
     if declared is not None:
         try:
-            if int(declared) > limit:
-                return True
+            if int(declared) < 0 or int(declared) > limit:
+                return PlainTextResponse("Request body too large", status_code=413)
         except ValueError:
             pass
-    return len(body) > limit
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            return PlainTextResponse("Request body too large", status_code=413)
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 async def _require_device(session: AsyncSession, serial: str) -> Device | PlainTextResponse:
+    settings = get_settings()
     try:
-        device, created = await device_svc.register_device(session, serial)
+        device = await device_svc.get_by_serial(session, serial)
+        created = False
+        if device is None:
+            if not settings.zkteco_auto_register_unknown:
+                log.warning("unprovisioned_device_rejected", serial=serial)
+                return PlainTextResponse("Device not provisioned", status_code=403)
+            device, created = await device_svc.register_device(session, serial)
     except InvalidSerialNumberError:
         return PlainTextResponse("Invalid SN parameter", status_code=400)
     except DeviceLimitReachedError:
         return PlainTextResponse("Device limit reached", status_code=503)
+    if device.status == "disabled":
+        log.warning("disabled_device_rejected", serial=serial)
+        return PlainTextResponse("Device disabled", status_code=403)
     await device_svc.touch_activity(session, device)
     if created:
         log.info("device_registered", serial=serial)
@@ -108,9 +137,15 @@ async def _store_payload(
         device_id=device.id if device is not None else None,
         endpoint=endpoint,
         data_type=data_type,
-        content_type=request.headers.get("content-type"),
-        headers=dict(request.headers),
-        query_params=dict(request.query_params),
+        content_type=(request.headers.get("content-type") or "")[:100] or None,
+        # Cookies and authorization headers must never enter forensic payload
+        # storage. Keep only the protocol diagnostics needed for support.
+        headers={
+            key: value[:512]
+            for key, value in request.headers.items()
+            if key.lower() in {"content-type", "content-length", "user-agent"}
+        },
+        query_params=_safe_query_params(request),
         # Never retain biometric templates, face photos or similar binary data
         # received unexpectedly through Security PUSH querydata.  Its hash is
         # still retained for an auditable integrity trail.
@@ -184,9 +219,9 @@ async def handle_cdata(
         return sn
     if not await check_adms_limit(request, serial=sn, endpoint="cdata"):
         return PlainTextResponse("Rate limit exceeded", status_code=429)
-    body = await request.body()
-    if _body_too_large(request, body):
-        return PlainTextResponse("Request body too large", status_code=413)
+    body = await _read_bounded_body(request)
+    if isinstance(body, PlainTextResponse):
+        return body
 
     device = await _require_device(session, serial=sn)
     if isinstance(device, PlainTextResponse):
@@ -405,8 +440,7 @@ async def _handle_info_or_commands(
 
 def _querydata_is_biometric(request: Request) -> bool:
     values = " ".join(
-        request.query_params.get(key, "")
-        for key in ("type", "table", "tablename", "data_type")
+        request.query_params.get(key, "") for key in ("type", "table", "tablename", "data_type")
     ).lower()
     return "bio" in values or "photo" in values or "face" in values
 
@@ -427,9 +461,9 @@ async def handle_querydata(
         return sn
     if not await check_adms_limit(request, serial=sn, endpoint="querydata"):
         return PlainTextResponse("Rate limit exceeded", status_code=429)
-    body = await request.body()
-    if _body_too_large(request, body):
-        return PlainTextResponse("Request body too large", status_code=413)
+    body = await _read_bounded_body(request)
+    if isinstance(body, PlainTextResponse):
+        return body
     device = await _require_device(session, serial=sn)
     if isinstance(device, PlainTextResponse):
         await session.rollback()
@@ -442,6 +476,8 @@ async def handle_querydata(
         or "unknown"
     ).lower()
     biometric = _querydata_is_biometric(request)
+    known_user_table = query_type in {"user", "users", "userinfo"}
+    redact_unknown = not known_user_table and not get_settings().zkteco_retain_unknown_querydata
     try:
         payload = await _store_payload(
             session,
@@ -450,7 +486,7 @@ async def handle_querydata(
             request=request,
             body=body,
             data_type=f"QUERYDATA:{query_type[:40]}",
-            redact_body=biometric,
+            redact_body=biometric or redact_unknown,
         )
         imported = 0
         if biometric:
@@ -463,7 +499,7 @@ async def handle_querydata(
                 payload={"query_type": query_type, "payload_id": str(payload.id)},
                 severity="warning",
             )
-        elif query_type in {"user", "users", "userinfo"}:
+        elif known_user_table:
             users, stats = adms_parser.parse_userinfo(
                 body.decode("utf-8", errors="replace"), device.serial_number
             )
@@ -472,7 +508,12 @@ async def handle_querydata(
             if stats.skipped:
                 payload.error_message = f"skipped {stats.skipped}/{stats.total} malformed user rows"
         else:
-            payload.processing_status = "received"
+            payload.processing_status = "quarantined"
+            payload.error_message = (
+                "Unknown querydata body redacted by policy"
+                if redact_unknown
+                else "Unknown querydata retained by explicit lab policy"
+            )
         payload.processed_at = _utcnow()
         await event_svc.emit(
             session,
@@ -482,9 +523,10 @@ async def handle_querydata(
                 "query_type": query_type,
                 "imported_users": imported,
                 "biometric_redacted": biometric,
+                "unknown_body_redacted": redact_unknown,
                 "command_id": request.query_params.get("cmdid"),
             },
-            severity="warning" if biometric else "info",
+            severity="warning" if biometric or redact_unknown else "info",
         )
         await session.commit()
     except Exception as exc:
@@ -508,9 +550,9 @@ async def handle_registry(
         return sn
     if not await check_adms_limit(request, serial=sn, endpoint="registry"):
         return PlainTextResponse("Rate limit exceeded", status_code=429)
-    body = await request.body()
-    if _body_too_large(request, body):
-        return PlainTextResponse("Request body too large", status_code=413)
+    body = await _read_bounded_body(request)
+    if isinstance(body, PlainTextResponse):
+        return body
 
     device = await _require_device(session, serial=sn)
     if isinstance(device, PlainTextResponse):
@@ -578,9 +620,9 @@ async def handle_push(
         return sn
     if not await check_adms_limit(request, serial=sn, endpoint="push"):
         return PlainTextResponse("Rate limit exceeded", status_code=429)
-    body = await request.body()
-    if _body_too_large(request, body):
-        return PlainTextResponse("Request body too large", status_code=413)
+    body = await _read_bounded_body(request)
+    if isinstance(body, PlainTextResponse):
+        return body
 
     device = await _require_device(session, serial=sn)
     if isinstance(device, PlainTextResponse):
@@ -617,9 +659,9 @@ async def handle_getrequest(
         return sn
     if not await check_adms_limit(request, serial=sn, endpoint="getrequest"):
         return PlainTextResponse("Rate limit exceeded", status_code=429)
-    body = await request.body()
-    if _body_too_large(request, body):
-        return PlainTextResponse("Request body too large", status_code=413)
+    body = await _read_bounded_body(request)
+    if isinstance(body, PlainTextResponse):
+        return body
 
     device = await _require_device(session, serial=sn)
     if isinstance(device, PlainTextResponse):
@@ -652,9 +694,9 @@ async def handle_devicecmd(
         return sn
     if not await check_adms_limit(request, serial=sn, endpoint="devicecmd"):
         return PlainTextResponse("Rate limit exceeded", status_code=429)
-    body = await request.body()
-    if _body_too_large(request, body):
-        return PlainTextResponse("Request body too large", status_code=413)
+    body = await _read_bounded_body(request)
+    if isinstance(body, PlainTextResponse):
+        return body
 
     device = await _require_device(session, serial=sn)
     if isinstance(device, PlainTextResponse):

@@ -77,6 +77,7 @@ from app.models.hr import (
     WorkSchedule,
 )
 from app.models.user import User
+from app.services import access as access_svc
 from app.services import audit as audit_svc
 from app.services.holidays import ensure_statutory_holidays
 from app.services.hr_pii import (
@@ -116,10 +117,13 @@ groups_router = APIRouter(prefix="/corporate-groups", tags=["corporate-groups"])
 
 @groups_router.get("", response_model=list[CorporateGroupOut])
 async def list_groups(
-    _user: User = Depends(deps.require_permission("companies.read")),
+    user: User = Depends(deps.require_permission("companies.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[CorporateGroup]:
-    result = await session.execute(select(CorporateGroup).order_by(CorporateGroup.name))
+    allowed = await access_svc.group_ids(session, user)
+    result = await session.execute(
+        select(CorporateGroup).where(CorporateGroup.id.in_(allowed)).order_by(CorporateGroup.name)
+    )
     return list(result.scalars())
 
 
@@ -130,6 +134,8 @@ async def create_group(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> CorporateGroup:
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Only a superuser can create corporate groups")
     if await session.scalar(select(CorporateGroup).where(CorporateGroup.code == payload.code)):
         raise HTTPException(status_code=409, detail="Corporate group code already exists")
     row = CorporateGroup(**payload.model_dump())
@@ -146,9 +152,7 @@ HARD_DELETE_CAPTCHA_TTL_SECONDS = 300
 _UNSET = object()
 
 
-async def _replace_business_address(
-    owner: Company | Site, payload: BusinessAddress | None
-) -> None:
+async def _replace_business_address(owner: Company | Site, payload: BusinessAddress | None) -> None:
     """Replace the single structured address owned by a company or branch."""
 
     if payload is None:
@@ -207,10 +211,11 @@ async def _new_hard_delete_captcha(
 async def list_companies(
     corporate_group_id: uuid.UUID | None = None,
     include_inactive: bool = False,
-    _user: User = Depends(deps.require_permission("companies.read")),
+    user: User = Depends(deps.require_permission("companies.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Company]:
     query = select(Company).options(selectinload(Company.address)).order_by(Company.legal_name)
+    query = query.where(Company.id.in_(await access_svc.company_ids(session, user)))
     if not include_inactive:
         query = query.where(Company.active.is_(True))
     if corporate_group_id:
@@ -226,8 +231,7 @@ async def create_company(
     rid: str = Depends(deps.request_id),
 ) -> Company:
     _validate_timezone(payload.timezone)
-    if await session.get(CorporateGroup, payload.corporate_group_id) is None:
-        raise HTTPException(status_code=404, detail="Corporate group not found")
+    await access_svc.require_group_management(session, user, payload.corporate_group_id)
     values = payload.model_dump(exclude={"address"})
     row = Company(**values)
     session.add(row)
@@ -246,6 +250,7 @@ async def update_company(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Company:
+    await access_svc.require_company(session, user, company_id)
     row = await session.scalar(
         select(Company).options(selectinload(Company.address)).where(Company.id == company_id)
     )
@@ -273,9 +278,7 @@ async def soft_delete_company(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> None:
-    row = await session.get(Company, company_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Company not found")
+    row = await access_svc.require_company(session, user, company_id)
     has_active_branches = await session.scalar(
         select(Site.id).where(Site.company_id == company_id, Site.active.is_(True))
     )
@@ -295,9 +298,7 @@ async def company_hard_delete_captcha(
     user: User = Depends(deps.get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> HardDeleteCaptchaOut:
-    row = await session.get(Company, company_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Company not found")
+    row = await access_svc.require_company(session, user, company_id)
     if row.active:
         raise HTTPException(status_code=409, detail="Soft-delete company before permanent deletion")
     return await _new_hard_delete_captcha(user, "company", company_id)
@@ -311,9 +312,7 @@ async def hard_delete_company(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> None:
-    row = await session.get(Company, company_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Company not found")
+    row = await access_svc.require_company(session, user, company_id)
     if row.active:
         raise HTTPException(status_code=409, detail="Soft-delete company before permanent deletion")
     await _require_hard_delete_captcha(user, "company", company_id, payload)
@@ -342,10 +341,11 @@ sites_router = APIRouter(prefix="/sites", tags=["sites"])
 async def list_sites(
     company_id: uuid.UUID | None = None,
     include_inactive: bool = False,
-    _user: User = Depends(deps.require_permission("sites.read")),
+    user: User = Depends(deps.require_permission("sites.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Site]:
     query = select(Site).options(selectinload(Site.address)).order_by(Site.name)
+    query = query.where(Site.company_id.in_(await access_svc.company_ids(session, user)))
     if not include_inactive:
         query = query.where(Site.active.is_(True))
     if company_id:
@@ -361,9 +361,7 @@ async def create_site(
     rid: str = Depends(deps.request_id),
 ) -> Site:
     _validate_timezone(payload.timezone)
-    company = await session.get(Company, payload.company_id)
-    if company is None:
-        raise HTTPException(status_code=404, detail="Company not found")
+    company = await access_svc.require_company(session, user, payload.company_id)
     if not company.active:
         raise HTTPException(status_code=409, detail="Cannot add a branch to a soft-deleted company")
     values = payload.model_dump(exclude={"address"})
@@ -384,6 +382,7 @@ async def update_site(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Site:
+    await access_svc.require_site(session, user, site_id)
     row = await session.scalar(
         select(Site).options(selectinload(Site.address)).where(Site.id == site_id)
     )
@@ -411,9 +410,7 @@ async def soft_delete_site(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> None:
-    row = await session.get(Site, site_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Branch not found")
+    row = await access_svc.require_site(session, user, site_id)
     row.active = False
     await session.flush()
     await _audit(session, user, "site.soft_delete", "site", row.id, rid)
@@ -426,9 +423,7 @@ async def site_hard_delete_captcha(
     user: User = Depends(deps.get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> HardDeleteCaptchaOut:
-    row = await session.get(Site, site_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Branch not found")
+    row = await access_svc.require_site(session, user, site_id)
     if row.active:
         raise HTTPException(status_code=409, detail="Soft-delete branch before permanent deletion")
     return await _new_hard_delete_captcha(user, "site", site_id)
@@ -442,9 +437,7 @@ async def hard_delete_site(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> None:
-    row = await session.get(Site, site_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Branch not found")
+    row = await access_svc.require_site(session, user, site_id)
     if row.active:
         raise HTTPException(status_code=409, detail="Soft-delete branch before permanent deletion")
     await _require_hard_delete_captcha(user, "site", site_id, payload)
@@ -497,12 +490,16 @@ def _parse_attendance_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 async def list_people(
     corporate_group_id: uuid.UUID,
     limit: int = Query(default=50, le=200),
-    _user: User = Depends(deps.require_permission("people.read")),
+    user: User = Depends(deps.require_permission("people.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Person]:
+    await access_svc.require_group(session, user, corporate_group_id)
     query = (
         select(Person)
-        .where(Person.corporate_group_id == corporate_group_id)
+        .where(
+            Person.corporate_group_id == corporate_group_id,
+            Person.id.in_(await access_svc.person_ids(session, user)),
+        )
         .order_by(Person.last_name, Person.first_name)
         .limit(limit)
     )
@@ -516,8 +513,10 @@ async def create_person(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Person:
-    if await session.get(CorporateGroup, payload.corporate_group_id) is None:
-        raise HTTPException(status_code=404, detail="Corporate group not found")
+    # Creating a group-level identity requires a whole-group scope. A
+    # company-only operator may manage people already employed by that
+    # company, but cannot create identities that initially have no owner.
+    await access_svc.require_group_management(session, user, payload.corporate_group_id)
     row = Person(**payload.model_dump())
     session.add(row)
     await session.flush()
@@ -529,13 +528,10 @@ async def create_person(
 @people_router.get("/{person_id}", response_model=PersonOut)
 async def get_person(
     person_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("people.read")),
+    user: User = Depends(deps.require_permission("people.read")),
     session: AsyncSession = Depends(get_db),
 ) -> Person:
-    row = await session.get(Person, person_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Person not found")
-    return row
+    return await access_svc.require_person(session, user, person_id)
 
 
 @people_router.patch("/{person_id}", response_model=PersonOut)
@@ -546,9 +542,7 @@ async def update_person(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Person:
-    row = await session.get(Person, person_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Person not found")
+    row = await access_svc.require_person(session, user, person_id)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         return row
@@ -563,12 +557,16 @@ async def update_person(
 @people_router.get("/{person_id}/photo")
 async def get_person_photo(
     person_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("people.read")),
+    user: User = Depends(deps.require_permission("people.read")),
     session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
 ) -> Response:
+    await access_svc.require_person(session, user, person_id)
     row = await session.scalar(select(PersonPhoto).where(PersonPhoto.person_id == person_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Worker photo not found")
+    await _audit(session, user, "person.photo.read", "person", person_id, rid)
+    await session.commit()
     return Response(
         content=row.image_data,
         media_type=row.content_type,
@@ -587,8 +585,7 @@ async def update_person_photo(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> PersonPhoto:
-    if await session.get(Person, person_id) is None:
-        raise HTTPException(status_code=404, detail="Person not found")
+    await access_svc.require_person(session, user, person_id)
     if photo.size is not None and photo.size > MAX_PERSON_PHOTO_BYTES:
         raise HTTPException(status_code=413, detail="Photo must not exceed 5 MB")
     image_data = await photo.read(MAX_PERSON_PHOTO_BYTES + 1)
@@ -599,8 +596,13 @@ async def update_person_photo(
     content_type = _photo_content_type(image_data, photo.content_type)
     row = await session.scalar(select(PersonPhoto).where(PersonPhoto.person_id == person_id))
     if row is None:
-        row = PersonPhoto(person_id=person_id, image_data=image_data, content_type=content_type,
-                          size_bytes=len(image_data), sha256=sha256(image_data).hexdigest())
+        row = PersonPhoto(
+            person_id=person_id,
+            image_data=image_data,
+            content_type=content_type,
+            size_bytes=len(image_data),
+            sha256=sha256(image_data).hexdigest(),
+        )
         session.add(row)
     else:
         row.image_data = image_data
@@ -620,6 +622,7 @@ async def delete_person_photo(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> None:
+    await access_svc.require_person(session, user, person_id)
     row = await session.scalar(select(PersonPhoto).where(PersonPhoto.person_id == person_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Worker photo not found")
@@ -639,18 +642,20 @@ def _pii_unavailable(exc: PiiEncryptionUnavailableError) -> HTTPException:
 @people_router.get("/{person_id}/sensitive", response_model=PersonSensitiveIdentifiersOut)
 async def get_person_sensitive_identifiers(
     person_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("people.write")),
+    user: User = Depends(deps.require_permission("people.sensitive.read")),
     session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
 ) -> PersonSensitiveIdentifiersOut:
-    if await session.get(Person, person_id) is None:
-        raise HTTPException(status_code=404, detail="Person not found")
+    await access_svc.require_person(session, user, person_id)
     row = await session.scalar(
         select(PersonSensitiveIdentifier).where(PersonSensitiveIdentifier.person_id == person_id)
     )
     if row is None:
+        await _audit(session, user, "person.sensitive_identifiers.read", "person", person_id, rid)
+        await session.commit()
         return PersonSensitiveIdentifiersOut()
     try:
-        return PersonSensitiveIdentifiersOut(
+        result = PersonSensitiveIdentifiersOut(
             curp=decrypt_identifier(row.curp_encrypted) if row.curp_encrypted else None,
             rfc=decrypt_identifier(row.rfc_encrypted) if row.rfc_encrypted else None,
             nss=decrypt_identifier(row.nss_encrypted) if row.nss_encrypted else None,
@@ -664,6 +669,9 @@ async def get_person_sensitive_identifiers(
             if row.fiscal_postal_code_encrypted
             else None,
         )
+        await _audit(session, user, "person.sensitive_identifiers.read", "person", person_id, rid)
+        await session.commit()
+        return result
     except PiiEncryptionUnavailableError as exc:
         raise _pii_unavailable(exc) from exc
 
@@ -672,12 +680,11 @@ async def get_person_sensitive_identifiers(
 async def update_person_sensitive_identifiers(
     person_id: uuid.UUID,
     payload: PersonSensitiveIdentifiersIn,
-    user: User = Depends(deps.require_permission("people.write")),
+    user: User = Depends(deps.require_permission("people.sensitive.write")),
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> PersonSensitiveIdentifiersOut:
-    if await session.get(Person, person_id) is None:
-        raise HTTPException(status_code=404, detail="Person not found")
+    await access_svc.require_person(session, user, person_id)
     try:
         row = await session.scalar(
             select(PersonSensitiveIdentifier).where(
@@ -735,7 +742,7 @@ async def list_person_attendance(
     date_to: datetime | None = None,
     cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=100),
-    _user: User = Depends(deps.require_permission("attendance.read")),
+    user: User = Depends(deps.require_permission("attendance.read")),
     session: AsyncSession = Depends(get_db),
 ) -> PersonAttendancePageOut:
     """List captured marks, newest first, without offset pagination drift.
@@ -744,8 +751,7 @@ async def list_person_attendance(
     that person.  This intentionally exposes the raw device record; schedule
     interpretation is a separate payroll/attendance-calculation concern.
     """
-    if await session.get(Person, person_id) is None:
-        raise HTTPException(status_code=404, detail="Person not found")
+    await access_svc.require_person(session, user, person_id)
     for label, value in (("date_from", date_from), ("date_to", date_to)):
         if value is not None and value.tzinfo is None:
             raise HTTPException(status_code=422, detail=f"{label} must include a timezone")
@@ -757,7 +763,11 @@ async def list_person_attendance(
     query = (
         select(AttendanceLog)
         .join(DeviceUser, AttendanceLog.device_user_id == DeviceUser.id)
-        .where(DeviceUser.person_id == person_id, AttendanceLog.recorded_at >= date_from)
+        .where(
+            DeviceUser.person_id == person_id,
+            AttendanceLog.device_id.in_(await access_svc.device_ids(session, user)),
+            AttendanceLog.recorded_at >= date_from,
+        )
         .order_by(AttendanceLog.recorded_at.desc(), AttendanceLog.id.desc())
         .limit(limit + 1)
     )
@@ -798,13 +808,19 @@ employments_router = APIRouter(prefix="/employments", tags=["employments"])
 async def list_employments(
     company_id: uuid.UUID | None = None,
     person_id: uuid.UUID | None = None,
-    _user: User = Depends(deps.require_permission("employments.read")),
+    user: User = Depends(deps.require_permission("employments.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Employment]:
-    query = select(Employment).order_by(Employment.employee_number)
+    query = (
+        select(Employment)
+        .where(Employment.company_id.in_(await access_svc.company_ids(session, user)))
+        .order_by(Employment.employee_number)
+    )
     if company_id:
+        await access_svc.require_company(session, user, company_id)
         query = query.where(Employment.company_id == company_id)
     if person_id:
+        await access_svc.require_person(session, user, person_id)
         query = query.where(Employment.person_id == person_id)
     return list((await session.execute(query)).scalars())
 
@@ -817,15 +833,13 @@ async def create_employment(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Employment:
-    person = await session.get(Person, person_id)
-    company = await session.get(Company, payload.company_id)
-    if person is None or company is None:
-        raise HTTPException(status_code=404, detail="Person or company not found")
+    person = await access_svc.require_person(session, user, person_id)
+    company = await access_svc.require_company(session, user, payload.company_id)
     if person.corporate_group_id != company.corporate_group_id:
         raise HTTPException(status_code=422, detail="Person and company belong to different groups")
     if payload.site_id is not None:
-        site = await session.get(Site, payload.site_id)
-        if site is None or site.company_id != company.id:
+        site = await access_svc.require_site(session, user, payload.site_id)
+        if site.company_id != company.id:
             raise HTTPException(status_code=422, detail="Site belongs to another company")
     if payload.ended_on is not None and payload.ended_on < payload.started_on:
         raise HTTPException(status_code=422, detail="ended_on must not precede started_on")
@@ -862,17 +876,24 @@ def _compensation_out(row: EmploymentCompensation) -> EmploymentCompensationOut:
 @employments_router.get("/{employment_id}/compensation", response_model=EmploymentCompensationOut)
 async def get_employment_compensation(
     employment_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("payroll.read")),
+    user: User = Depends(deps.require_permission("payroll.read")),
     session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
 ) -> EmploymentCompensationOut:
-    if await session.get(Employment, employment_id) is None:
-        raise HTTPException(status_code=404, detail="Employment not found")
+    await access_svc.require_employment(session, user, employment_id)
     row = await session.scalar(
         select(EmploymentCompensation).where(EmploymentCompensation.employment_id == employment_id)
     )
     if row is None:
+        await _audit(
+            session, user, "employment.compensation.read", "employment", employment_id, rid
+        )
+        await session.commit()
         return EmploymentCompensationOut(employment_id=employment_id)
-    return _compensation_out(row)
+    result = _compensation_out(row)
+    await _audit(session, user, "employment.compensation.read", "employment", employment_id, rid)
+    await session.commit()
+    return result
 
 
 @employments_router.put("/{employment_id}/compensation", response_model=EmploymentCompensationOut)
@@ -883,8 +904,7 @@ async def update_employment_compensation(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> EmploymentCompensationOut:
-    if await session.get(Employment, employment_id) is None:
-        raise HTTPException(status_code=404, detail="Employment not found")
+    await access_svc.require_employment(session, user, employment_id)
     try:
         row = await session.scalar(
             select(EmploymentCompensation).where(
@@ -921,9 +941,10 @@ holidays_router = APIRouter(prefix="/holidays", tags=["holidays"])
 async def list_holidays(
     company_id: uuid.UUID,
     year: int | None = Query(default=None, ge=2000, le=2200),
-    _user: User = Depends(deps.require_permission("schedules.read")),
+    user: User = Depends(deps.require_permission("schedules.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[Holiday]:
+    await access_svc.require_company(session, user, company_id)
     query = select(Holiday).where(Holiday.company_id == company_id).order_by(Holiday.holiday_date)
     if year is not None:
         query = query.where(
@@ -939,8 +960,7 @@ async def create_holiday(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> Holiday:
-    if await session.get(Company, payload.company_id) is None:
-        raise HTTPException(status_code=404, detail="Company not found")
+    await access_svc.require_company(session, user, payload.company_id)
     existing = await session.scalar(
         select(Holiday).where(
             Holiday.company_id == payload.company_id, Holiday.holiday_date == payload.holiday_date
@@ -964,8 +984,7 @@ async def generate_holidays(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> HolidayGenerationOut:
-    if await session.get(Company, company_id) is None:
-        raise HTTPException(status_code=404, detail="Company not found")
+    await access_svc.require_company(session, user, company_id)
     created, existing = await ensure_statutory_holidays(session, company_id, year)
     await session.flush()
     await _audit(session, user, "holiday.generate_statutory", "company", company_id, rid)
@@ -992,11 +1011,16 @@ def _schedule_out(row: WorkSchedule, slots: list[ScheduleSlot]) -> WorkScheduleO
 @schedules_router.get("", response_model=list[WorkScheduleOut])
 async def list_work_schedules(
     company_id: uuid.UUID | None = None,
-    _user: User = Depends(deps.require_permission("schedules.read")),
+    user: User = Depends(deps.require_permission("schedules.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[WorkScheduleOut]:
-    query = select(WorkSchedule).order_by(WorkSchedule.name, WorkSchedule.version)
+    query = (
+        select(WorkSchedule)
+        .where(WorkSchedule.company_id.in_(await access_svc.company_ids(session, user)))
+        .order_by(WorkSchedule.name, WorkSchedule.version)
+    )
     if company_id:
+        await access_svc.require_company(session, user, company_id)
         query = query.where(WorkSchedule.company_id == company_id)
     schedules = list((await session.execute(query)).scalars())
     if not schedules:
@@ -1025,8 +1049,7 @@ async def create_work_schedule(
     rid: str = Depends(deps.request_id),
 ) -> WorkScheduleOut:
     _validate_timezone(payload.timezone)
-    if await session.get(Company, payload.company_id) is None:
-        raise HTTPException(status_code=404, detail="Company not found")
+    await access_svc.require_company(session, user, payload.company_id)
     positions = {(slot.day_of_week, slot.kind, slot.sequence) for slot in payload.slots}
     if len(positions) != len(payload.slots):
         raise HTTPException(status_code=422, detail="Duplicate schedule slot position")
@@ -1087,6 +1110,7 @@ async def update_work_schedule(
     row = await session.get(WorkSchedule, schedule_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Work schedule not found")
+    await access_svc.require_company(session, user, row.company_id)
     assigned = await session.scalar(
         select(ScheduleAssignment.id)
         .where(ScheduleAssignment.work_schedule_id == schedule_id)
@@ -1138,11 +1162,15 @@ async def delete_work_schedule(
     row = await session.get(WorkSchedule, schedule_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Work schedule not found")
-    if await session.scalar(
-        select(ScheduleAssignment.id)
-        .where(ScheduleAssignment.work_schedule_id == schedule_id)
-        .limit(1)
-    ) is not None:
+    await access_svc.require_company(session, user, row.company_id)
+    if (
+        await session.scalar(
+            select(ScheduleAssignment.id)
+            .where(ScheduleAssignment.work_schedule_id == schedule_id)
+            .limit(1)
+        )
+        is not None
+    ):
         raise HTTPException(
             status_code=409,
             detail="A schedule with assignment history cannot be deleted; edit creates a version",
@@ -1163,10 +1191,11 @@ async def assign_schedule(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> ScheduleAssignment:
-    employment = await session.get(Employment, employment_id)
+    employment = await access_svc.require_employment(session, user, employment_id)
     schedule = await session.get(WorkSchedule, payload.work_schedule_id)
-    if employment is None or schedule is None:
+    if schedule is None:
         raise HTTPException(status_code=404, detail="Employment or work schedule not found")
+    await access_svc.require_company(session, user, schedule.company_id)
     if employment.company_id != schedule.company_id:
         raise HTTPException(status_code=422, detail="Schedule belongs to another company")
     if payload.effective_to is not None and payload.effective_to < payload.effective_from:
@@ -1197,11 +1226,10 @@ async def assign_schedule(
 )
 async def list_schedule_assignments(
     employment_id: uuid.UUID,
-    _user: User = Depends(deps.require_permission("schedules.read")),
+    user: User = Depends(deps.require_permission("schedules.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[ScheduleAssignment]:
-    if await session.get(Employment, employment_id) is None:
-        raise HTTPException(status_code=404, detail="Employment not found")
+    await access_svc.require_employment(session, user, employment_id)
     return list(
         (
             await session.execute(
@@ -1222,10 +1250,17 @@ def _enrollment_out(row: EnrollmentRequest) -> EnrollmentRequestOut:
         employment_id=row.employment_id,
         device_id=row.device_id,
         methods=list((row.methods or {}).get("requested", [])),
+        fingerprint_positions=list((row.methods or {}).get("fingerprint_positions", [])),
         status=row.status,
         requested_by=row.requested_by,
         approved_by=row.approved_by,
         completed_by=row.completed_by,
+        identity_verified_by=row.identity_verified_by,
+        identity_verified_at=row.identity_verified_at,
+        identity_verification_reference=row.identity_verification_reference,
+        consent_recorded_by=row.consent_recorded_by,
+        consent_recorded_at=row.consent_recorded_at,
+        consent_reference=row.consent_reference,
         note=row.note,
     )
 
@@ -1234,13 +1269,21 @@ def _enrollment_out(row: EnrollmentRequest) -> EnrollmentRequestOut:
 async def list_enrollment_requests(
     employment_id: uuid.UUID | None = None,
     device_id: uuid.UUID | None = None,
-    _user: User = Depends(deps.require_permission("enrollments.read")),
+    user: User = Depends(deps.require_permission("enrollments.read")),
     session: AsyncSession = Depends(get_db),
 ) -> list[EnrollmentRequestOut]:
-    query = select(EnrollmentRequest).order_by(EnrollmentRequest.created_at.desc()).limit(200)
+    query = (
+        select(EnrollmentRequest)
+        .join(Employment, EnrollmentRequest.employment_id == Employment.id)
+        .where(Employment.company_id.in_(await access_svc.company_ids(session, user)))
+        .order_by(EnrollmentRequest.created_at.desc())
+        .limit(200)
+    )
     if employment_id:
+        await access_svc.require_employment(session, user, employment_id)
         query = query.where(EnrollmentRequest.employment_id == employment_id)
     if device_id:
+        await access_svc.require_device(session, user, device_id)
         query = query.where(EnrollmentRequest.device_id == device_id)
     return [_enrollment_out(row) for row in (await session.execute(query)).scalars()]
 
@@ -1252,10 +1295,8 @@ async def create_enrollment_request(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> EnrollmentRequestOut:
-    employment = await session.get(Employment, payload.employment_id)
-    device = await session.get(Device, payload.device_id)
-    if employment is None or device is None:
-        raise HTTPException(status_code=404, detail="Employment or device not found")
+    employment = await access_svc.require_employment(session, user, payload.employment_id)
+    device = await access_svc.require_device(session, user, payload.device_id)
     if device.site_id is not None:
         site = await session.get(Site, device.site_id)
         if site is not None and site.company_id != employment.company_id:
@@ -1264,11 +1305,43 @@ async def create_enrollment_request(
     methods = {method.lower() for method in payload.methods}
     if not methods.issubset(allowed_methods):
         raise HTTPException(status_code=422, detail="Unsupported enrollment method")
+    allowed_fingers = {
+        "left_little",
+        "left_ring",
+        "left_middle",
+        "left_index",
+        "left_thumb",
+        "right_thumb",
+        "right_index",
+        "right_middle",
+        "right_ring",
+        "right_little",
+    }
+    fingers = {position.lower() for position in payload.fingerprint_positions}
+    if not fingers.issubset(allowed_fingers) or len(fingers) != len(payload.fingerprint_positions):
+        raise HTTPException(status_code=422, detail="Unsupported or duplicate fingerprint position")
+    if "fingerprint" in methods and not fingers:
+        raise HTTPException(status_code=422, detail="Select at least one fingerprint position")
+    if fingers and "fingerprint" not in methods:
+        raise HTTPException(
+            status_code=422, detail="Fingerprint positions require fingerprint method"
+        )
+    biometric_methods = {"face", "fingerprint", "palm"}
+    if methods & biometric_methods and (
+        not payload.consent_obtained or not payload.consent_reference
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Biometric enrollment requires recorded consent and its reference",
+        )
     row = EnrollmentRequest(
         employment_id=employment.id,
         device_id=device.id,
-        methods={"requested": sorted(methods)},
+        methods={"requested": sorted(methods), "fingerprint_positions": sorted(fingers)},
         requested_by=user.id,
+        consent_recorded_by=user.id if payload.consent_obtained else None,
+        consent_recorded_at=datetime.now(UTC) if payload.consent_obtained else None,
+        consent_reference=payload.consent_reference,
         note=payload.note,
     )
     session.add(row)
@@ -1289,10 +1362,41 @@ async def update_enrollment_request(
     row = await session.get(EnrollmentRequest, request_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Enrollment request not found")
+    await access_svc.require_employment(session, user, row.employment_id)
+    transitions = {
+        "requested": {"identity_verified", "rejected"},
+        "identity_verified": {"approved", "rejected"},
+        "approved": {"awaiting_device_enrollment", "rejected", "revoked"},
+        "awaiting_device_enrollment": {"verification_pending", "rejected", "revoked"},
+        "verification_pending": {"completed", "rejected", "revoked"},
+        "completed": {"revoked"},
+        "rejected": set(),
+        "revoked": set(),
+    }
+    if payload.status not in transitions.get(row.status, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Invalid enrollment transition: {row.status} -> {payload.status}",
+        )
+    if payload.status in {"identity_verified", "approved"} and row.requested_by == user.id:
+        raise HTTPException(
+            status_code=409,
+            detail="The requester cannot verify identity or approve the same enrollment",
+        )
+    if payload.status == "identity_verified":
+        if not payload.verification_reference:
+            raise HTTPException(
+                status_code=422, detail="Identity verification reference is required"
+            )
+        row.identity_verified_by = user.id
+        row.identity_verified_at = datetime.now(UTC)
+        row.identity_verification_reference = payload.verification_reference
     row.status = payload.status
     if payload.note is not None:
         row.note = payload.note
     if payload.status == "approved":
+        if row.identity_verified_by is None:
+            raise HTTPException(status_code=409, detail="Identity must be verified before approval")
         row.approved_by = user.id
     if payload.status == "completed":
         row.completed_by = user.id

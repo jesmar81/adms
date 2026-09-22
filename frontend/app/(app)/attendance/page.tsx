@@ -1,14 +1,19 @@
 "use client";
 
+import { Link2, Save, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { Can } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { Field, Input, Select } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { DataTable, Pagination } from "@/components/ui/table";
 import type { Column } from "@/components/ui/table";
-import type { AttendanceRow, Device } from "@/types";
+import { useToast } from "@/components/ui/toast";
+import type { AttendanceRow, Device, DeviceUser, Employment } from "@/types";
 
 const LIMIT = 50;
 
@@ -19,6 +24,15 @@ const COLUMNS: Column<AttendanceRow>[] = [
     render: (r) => <span className="font-mono font-medium">{r.device_user_pin}</span>,
   },
   { key: "at", header: "Fecha y hora", render: (r) => formatDateTime(r.recorded_at) },
+  {
+    key: "attribution",
+    header: "Atribución",
+    render: (r) => (
+      <span className={`rounded-full px-2 py-1 text-xs font-medium ${r.attribution_status === "assigned" ? "bg-emerald-50 text-emerald-700" : r.attribution_status === "ambiguous" ? "bg-amber-50 text-amber-700" : "bg-zinc-100 text-zinc-600"}`}>
+        {r.attribution_status === "assigned" ? "Asignada" : r.attribution_status === "ambiguous" ? "Ambigua" : "Sin asignar"}
+      </span>
+    ),
+  },
   {
     key: "status",
     header: "Estado",
@@ -33,8 +47,11 @@ const COLUMNS: Column<AttendanceRow>[] = [
 ];
 
 export default function Page() {
+  const { notify } = useToast();
   const [rows, setRows] = useState<AttendanceRow[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
+  const [deviceUsers, setDeviceUsers] = useState<DeviceUser[]>([]);
+  const [employments, setEmployments] = useState<Employment[]>([]);
   const [filters, setFilters] = useState({
     device_id: "",
     pin: "",
@@ -47,6 +64,10 @@ export default function Page() {
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [resolving, setResolving] = useState<AttendanceRow | null>(null);
+  const [employmentId, setEmploymentId] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,7 +90,13 @@ export default function Page() {
   }, [filters, offset]);
 
   useEffect(() => {
-    void api.devices().then(setDevices).catch(() => undefined);
+    void Promise.allSettled([api.devices(), api.deviceUsers(), api.employments()]).then(
+      ([loadedDevices, loadedUsers, loadedEmployments]) => {
+        if (loadedDevices.status === "fulfilled") setDevices(loadedDevices.value);
+        if (loadedUsers.status === "fulfilled") setDeviceUsers(loadedUsers.value);
+        if (loadedEmployments.status === "fulfilled") setEmployments(loadedEmployments.value);
+      },
+    );
   }, []);
 
   useEffect(() => {
@@ -82,6 +109,47 @@ export default function Page() {
   }
 
   const hasFilters = Object.values(filters).some((v) => v !== "");
+  const linkedPersonId = resolving
+    ? deviceUsers.find(
+        (row) => row.device_id === resolving.device_id && row.pin === resolving.device_user_pin,
+      )?.person_id
+    : null;
+  const candidateEmployments = employments.filter(
+    (employment) => employment.person_id === linkedPersonId,
+  );
+
+  function openResolution(row: AttendanceRow) {
+    const personId = deviceUsers.find(
+      (deviceUser) =>
+        deviceUser.device_id === row.device_id && deviceUser.pin === row.device_user_pin,
+    )?.person_id;
+    const first = employments.find((employment) => employment.person_id === personId);
+    setResolving(row);
+    setEmploymentId(row.employment_id ?? first?.id ?? "");
+    setReason("");
+  }
+
+  async function resolveAttribution() {
+    if (!resolving || !employmentId || reason.trim().length < 5 || saving) return;
+    setSaving(true);
+    try {
+      const updated = await api.resolveAttendanceAttribution(
+        resolving.id,
+        employmentId,
+        reason.trim(),
+      );
+      setRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+      setResolving(null);
+      notify("Checada atribuida", {
+        message: "La evidencia original se conservó y la resolución quedó auditada.",
+        tone: "success",
+      });
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <>
@@ -154,7 +222,7 @@ export default function Page() {
         <>
           <DataTable
             ariaLabel="Marcaciones"
-            columns={COLUMNS}
+            columns={[...COLUMNS, { key: "actions", header: "", render: (row) => <Can permission="attendance.write"><Button variant="ghost" size="sm" icon={<Link2 className="h-4 w-4" />} className="w-8 !px-0" aria-label="Resolver atribución" title="Resolver atribución" onClick={() => openResolution(row)} /></Can> }]}
             data={rows}
             keyOf={(r) => r.id}
             renderCard={(r) => (
@@ -163,7 +231,7 @@ export default function Page() {
                   <p className="font-mono text-sm font-medium">PIN {r.device_user_pin}</p>
                   <p className="mt-0.5 text-[13px] text-zinc-500">{formatDateTime(r.recorded_at)}</p>
                 </div>
-                <span className="text-sm tabular-nums text-zinc-600">estado {r.status}</span>
+                <span className="text-sm text-zinc-600">{r.attribution_status === "assigned" ? "Asignada" : r.attribution_status === "ambiguous" ? "Ambigua" : "Sin asignar"}</span>
               </div>
             )}
             empty={
@@ -178,6 +246,7 @@ export default function Page() {
           )}
         </>
       )}
+      <Modal open={resolving !== null} onClose={() => setResolving(null)} title="Resolver atribución de checada" description="Asigna esta evidencia a un solo empleo. El registro original del reloj no se modifica." footer={<><Button variant="ghost" icon={<X className="h-4 w-4" />} className="w-10 !px-0" aria-label="Cancelar" title="Cancelar" onClick={() => setResolving(null)} /><Button variant="primary" icon={<Save className="h-4 w-4" />} className="w-10 !px-0" aria-label="Guardar atribución" title="Guardar atribución" onClick={() => void resolveAttribution()} loading={saving} disabled={!employmentId || reason.trim().length < 5} /></>}><div className="grid gap-3"><Field label="Empleo">{(id) => <Select id={id} value={employmentId} onChange={(event) => setEmploymentId(event.target.value)}><option value="">Selecciona</option>{candidateEmployments.map((employment) => <option key={employment.id} value={employment.id}>{employment.employee_number} · {employment.position ?? "Sin puesto"}</option>)}</Select>}</Field><Field label="Motivo de la resolución">{(id) => <Input id={id} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Ej. Reloj sin sucursal al momento de la captura" />}</Field>{candidateEmployments.length === 0 ? <p className="text-sm text-amber-700">Primero vincula el PIN con una persona y confirma que tenga un empleo vigente.</p> : null}</div></Modal>
     </>
   );
 }

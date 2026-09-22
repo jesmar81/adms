@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -21,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adms.parser import AttendanceRecord
 from app.core.logging import get_logger
-from app.models.device import AttendanceLog, Device, DeviceUser
+from app.models.device import AttendanceAttribution, AttendanceLog, Device, DeviceUser
+from app.models.hr import Employment, Site
 from app.services import events as event_svc
 
 log = get_logger("attendance")
@@ -57,6 +59,82 @@ def _coerce_ts(session: AsyncSession, value: datetime) -> datetime:
 
 def _in_smallint(value: int) -> bool:
     return _SMALLINT_MIN <= value <= _SMALLINT_MAX
+
+
+def _attendance_day(recorded_at: datetime, timezone: str) -> date:
+    tz: tzinfo
+    try:
+        tz = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = UTC
+    aware = recorded_at.replace(tzinfo=UTC) if recorded_at.tzinfo is None else recorded_at
+    return aware.astimezone(tz).date()
+
+
+async def _attribute_inserted(
+    session: AsyncSession, *, device: Device, attendance_ids: list[uuid.UUID]
+) -> None:
+    if not attendance_ids:
+        return
+    rows = list(
+        (
+            await session.execute(
+                select(AttendanceLog, DeviceUser.person_id)
+                .outerjoin(DeviceUser, AttendanceLog.device_user_id == DeviceUser.id)
+                .where(AttendanceLog.id.in_(attendance_ids))
+            )
+        ).tuples()
+    )
+    site = await session.get(Site, device.site_id) if device.site_id else None
+    person_ids = {person_id for _, person_id in rows if person_id is not None}
+    employment_query = select(Employment).where(Employment.person_id.in_(person_ids))
+    if site is not None:
+        employment_query = employment_query.where(Employment.company_id == site.company_id)
+    employments = list((await session.execute(employment_query)).scalars()) if person_ids else []
+    by_person: dict[uuid.UUID, list[Employment]] = {}
+    for employment in employments:
+        by_person.setdefault(employment.person_id, []).append(employment)
+    now = datetime.now(UTC)
+    attributions: list[AttendanceAttribution] = []
+    for mark, person_id in rows:
+        attendance_day = _attendance_day(mark.recorded_at, mark.device_timezone or device.timezone)
+        candidates = [
+            employment
+            for employment in (by_person.get(person_id, []) if person_id is not None else [])
+            if employment.started_on <= attendance_day
+            and (employment.ended_on is None or employment.ended_on >= attendance_day)
+        ]
+        if person_id is None:
+            status, reason = "unassigned", "Device PIN is not linked to a person"
+        elif len(candidates) == 0:
+            status, reason = (
+                "unassigned",
+                "No employment matches device company and date"
+                if site is not None
+                else "No employment matches person and date",
+            )
+        elif len(candidates) > 1:
+            status, reason = (
+                "ambiguous",
+                "Multiple employments match device company and date"
+                if site is not None
+                else "Device has no site and multiple employments match person and date",
+            )
+        else:
+            status, reason = "assigned", None
+        attributions.append(
+            AttendanceAttribution(
+                attendance_log_id=mark.id,
+                employment_id=candidates[0].id if len(candidates) == 1 else None,
+                status=status,
+                method="device_site" if site is not None else "unique_employment",
+                reason=reason,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    session.add_all(attributions)
+    await session.flush()
 
 
 async def ingest_records(
@@ -149,7 +227,7 @@ async def ingest_records(
     if not values:
         return 0
     insert_fn = pg_insert if dialect == "postgresql" else sqlite_insert
-    inserted = 0
+    inserted_ids: list[uuid.UUID] = []
     for value_chunk in _chunks(values):
         stmt = (
             insert_fn(AttendanceLog)
@@ -167,8 +245,10 @@ async def ingest_records(
             .returning(AttendanceLog.id)
         )
         result = await session.execute(stmt)
-        inserted += len(result.scalars().all())
+        inserted_ids.extend(result.scalars().all())
+    inserted = len(inserted_ids)
     if inserted:
+        await _attribute_inserted(session, device=device, attendance_ids=inserted_ids)
         await event_svc.emit(
             session,
             device_id=device.id,

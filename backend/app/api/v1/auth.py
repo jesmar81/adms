@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.core.exceptions import AuthError
 from app.core.logging import get_logger
 from app.core.ratelimit import hit, redis_or_503
-from app.core.revocation import is_revoked, remember_refresh, revoke
+from app.core.revocation import consume_refresh, is_revoked, remember_refresh, revoke
 from app.models.user import User
 from app.services import audit as audit_svc
 from app.services import auth as auth_svc
@@ -225,15 +225,13 @@ async def refresh(
     try:
         if await is_revoked(claims["jti"]):
             raise AuthError("Token revoked")
+        if not await consume_refresh(claims["jti"], claims["sub"]):
+            raise AuthError("Refresh session expired or already used")
     except RedisError as exc:
         raise _503(request) from exc
     user = await auth_svc.get_user_by_id(session, claims["sub"])
     if user is None or not user.is_active:
         raise AuthError("Invalid token")
-    try:
-        await revoke(claims["jti"], get_settings().jwt_refresh_ttl)
-    except RedisError as exc:
-        raise _503(request) from exc
     pair = security.create_token_pair(str(user.id))
     try:
         await remember_refresh(pair["refresh_jti"], str(user.id), get_settings().jwt_refresh_ttl)
@@ -254,7 +252,9 @@ async def logout(
     refresh token (M-01). Either revocation failing closed aborts logout."""
     try:
         claims = security.decode_token(payload.refresh_token, security.REFRESH_TYPE)
-        await revoke(claims["jti"], get_settings().jwt_refresh_ttl)
+        if claims["sub"] == str(user.id):
+            await consume_refresh(claims["jti"], str(user.id))
+            await revoke(claims["jti"], get_settings().jwt_refresh_ttl)
     except AuthError:
         pass
     except RedisError as exc:
