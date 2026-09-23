@@ -32,14 +32,14 @@ def test_jwt_wrong_type_rejected() -> None:
 
 
 def test_jwt_algorithm_confusion_rejected() -> None:
-    from jose import jwt
+    import jwt
 
     from app.core.config import get_settings
 
     settings = get_settings()
     forged = jwt.encode(
         {"sub": "x", "type": "access", "iss": settings.jwt_issuer, "aud": settings.jwt_audience},
-        "not-a-key",
+        "attacker-controlled-secret-key-long-enough-for-hs256",
         algorithm="HS256",
     )
     with pytest.raises(AuthError):
