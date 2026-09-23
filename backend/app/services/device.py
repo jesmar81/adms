@@ -32,20 +32,10 @@ def _utcnow() -> datetime:
 
 
 def _ensure_aware(value: datetime) -> datetime:
-    """SQLite returns naive datetimes; interpret them as UTC (§47: never naive internally)."""
+    """Interpret naive legacy timestamps as UTC (§47: never naive internally)."""
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
-
-
-def _dialect_name(session: AsyncSession) -> str:
-    try:
-        bind = session.get_bind()
-        if bind is None:
-            return "postgresql"
-        return str(bind.dialect.name)
-    except Exception:
-        return "postgresql"
 
 
 async def get_by_serial(session: AsyncSession, serial: str) -> Device | None:
@@ -62,11 +52,10 @@ async def register_device(session: AsyncSession, serial: str) -> tuple[Device, b
         return device, False
     settings = get_settings()
     if settings.zkteco_max_devices > 0:
-        if _dialect_name(session) == "postgresql":
-            # Serialize concurrent registrations so the cap is exact (M-08).
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext('zkteco:device_register'))")
-            )
+        # Serialize concurrent registrations so the cap is exact (M-08).
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext('zkteco:device_register'))")
+        )
         count = await session.scalar(select(func.count()).select_from(Device))
         if (count or 0) >= settings.zkteco_max_devices:
             raise DeviceLimitReachedError(f"Device limit reached ({settings.zkteco_max_devices})")

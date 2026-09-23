@@ -2,8 +2,8 @@
 
 Set ZKTECO_ADMIN_USERNAME / ZKTECO_ADMIN_EMAIL / ZKTECO_ADMIN_PASSWORD to
 also bootstrap the initial superuser (idempotent: an existing username is
-left untouched). No fake devices. Schema must come from Alembic in
-production; the local create_all below is a dev/test convenience only.
+left untouched). No fake devices. The schema must already be migrated by
+Alembic; seeding never creates tables.
 """
 
 from __future__ import annotations
@@ -11,19 +11,27 @@ from __future__ import annotations
 import asyncio
 import os
 
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.models.device  # noqa: F401
 import app.models.hr  # noqa: F401
 from app.core.config import get_settings
-from app.models.base import Base
 from app.services.bootstrap import ensure_roles_permissions, ensure_superuser
 
 
 async def main() -> None:
     engine = create_async_engine(get_settings().database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+
+    def _has_users_table(conn) -> bool:  # type: ignore[no-untyped-def]
+        return bool(inspect(conn).has_table("users"))
+
+    async with engine.connect() as conn:
+        has_schema = await conn.run_sync(_has_users_table)
+    if not has_schema:
+        await engine.dispose()
+        raise RuntimeError("database schema is missing; run `alembic upgrade head` first")
+
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
         await ensure_roles_permissions(session)

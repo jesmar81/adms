@@ -1,7 +1,6 @@
 """M-06: PostgreSQL integration — native types, constraints, indexes, concurrency.
 
-Runs ONLY when ZKTECO_TEST_PG_URL is set (CI postgres job + local PG).
-SQLite can never prove UUID/JSONB/INET/TIMESTAMPTZ/SKIP LOCKED behavior.
+Runs against the migrated PostgreSQL test database used by the full CI suite.
 """
 
 from __future__ import annotations
@@ -246,7 +245,7 @@ async def test_pg_concurrent_register_limit(pg_engine, settings, monkeypatch) ->
 
 async def test_pg_seed_on_migrated_schema(pg_engine, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from app.core.config import get_settings
-    from app.core.constants import PERMISSIONS
+    from app.core.constants import DEFAULT_ROLES, PERMISSIONS
     from app.models.user import Permission, Role
     from app.seed import main
 
@@ -256,7 +255,7 @@ async def test_pg_seed_on_migrated_schema(pg_engine, monkeypatch) -> None:  # ty
     await main()
     factory = async_sessionmaker(pg_engine, expire_on_commit=False)
     async with factory() as session:
-        role_count = await session.scalar(select(func.count()).select_from(Role))
+        role_names = set((await session.execute(select(Role.name))).scalars().all())
         perm_count = await session.scalar(select(func.count()).select_from(Permission))
-    assert role_count == 3
+    assert role_names == set(DEFAULT_ROLES)
     assert perm_count == len(PERMISSIONS)

@@ -2,8 +2,7 @@
 
 - `protocol_command_id`: allocated with an atomic per-device counter
   (`UPDATE devices SET command_seq = command_seq + 1 RETURNING`), so
-  concurrent queue calls can never collide — on PostgreSQL the row lock
-  serializes writers; SQLite serializes writers by design.
+  concurrent queue calls can never collide — PostgreSQL row locks serialize writers.
 - `drain_for_device`: SELECT ... FOR UPDATE SKIP LOCKED (PG) so concurrent
   polls never deliver the same command twice.
 """

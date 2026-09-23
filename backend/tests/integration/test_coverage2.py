@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.core import security
 from app.core.database import get_db
@@ -67,11 +66,8 @@ async def test_login_non_json_body_422(cov_client) -> None:  # type: ignore[no-u
         assert "in create_user" not in response.text and "in login" not in response.text
 
 
-async def test_redis_down_refresh_and_logout_503(cov_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    def _boom(cls, *args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RedisConnectionError("down")
-
-    monkeypatch.setattr("redis.asyncio.Redis.from_url", classmethod(_boom))
+async def test_redis_down_refresh_and_logout_503(cov_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "redis_url", "redis://127.0.0.1:1/15")
     get_redis.cache_clear()
     assert (
         await cov_client.post("/api/v1/auth/refresh", json={"refresh_token": "x"})
@@ -207,25 +203,16 @@ async def test_registry_oversized_413(cov_client, settings) -> None:  # type: ig
     assert (await cov_client.post("/iclock/registry?SN=BIG1", content=big)).status_code == 413
 
 
-async def test_registry_failure_returns_500(cov_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from app.services import device as device_svc
-
-    def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RuntimeError("merge down")
-
-    monkeypatch.setattr(device_svc, "merge_options", _boom)
+async def test_registry_failure_returns_500(cov_client, postgres_failure_trigger) -> None:  # type: ignore[no-untyped-def]
+    await postgres_failure_trigger("devices", "UPDATE OF last_registry_at")
     response = await cov_client.post("/iclock/registry?SN=R500", content="~A=B")
     assert response.status_code == 500
     assert response.text == "ERROR"
 
 
-async def test_devicecmd_failure_stays_ok(cov_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from app.services import command as command_svc
-
-    async def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RuntimeError("confirm down")
-
-    monkeypatch.setattr(command_svc, "confirm_result", _boom)
+async def test_devicecmd_failure_stays_ok(cov_client, postgres_failure_trigger) -> None:  # type: ignore[no-untyped-def]
+    await cov_client.post("/iclock/registry?SN=D500", content="")
+    await postgres_failure_trigger("device_events", "INSERT")
     response = await cov_client.post("/iclock/devicecmd?SN=D500", content="ID=1&Return=0&CMD=X")
     assert response.status_code == 200
     assert response.text == "OK"
@@ -284,32 +271,25 @@ def test_peer_trust_and_client_ip(settings, monkeypatch) -> None:  # type: ignor
     monkeypatch.setattr(settings, "trusted_proxies_raw", "")
 
 
-def test_cli_in_process(tmp_path, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+async def test_cli_in_process(pg_session, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import asyncio
 
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy import select
 
-    import app.models.device  # noqa: F401
-    import app.models.user  # noqa: F401
     from app import cli
-    from app.models.base import Base
+    from app.models.user import User
 
-    db = tmp_path / "cli2.db"
-    monkeypatch.setattr(settings, "database_url", f"sqlite+aiosqlite:///{db}")
-
-    async def _make() -> None:
-        eng = create_async_engine(f"sqlite+aiosqlite:///{db}")
-        async with eng.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await eng.dispose()
-
-    asyncio.run(_make())
     monkeypatch.setenv("ZKTECO_ADMIN_USERNAME", "cliadmin")
     monkeypatch.setenv("ZKTECO_ADMIN_EMAIL", "cli@example.com")
-    monkeypatch.setenv("ZKTECO_ADMIN_PASSWORD", "cli-password-1")
-    assert cli.main(["createsuperuser", "--no-input"]) == 0
-    assert cli.main(["createsuperuser", "--no-input"]) == 1
+    monkeypatch.setenv("ZKTECO_ADMIN_PASSWORD", "cli-password-test-1")
+    assert await asyncio.to_thread(cli.main, ["createsuperuser", "--no-input"]) == 0
+    assert await asyncio.to_thread(cli.main, ["createsuperuser", "--no-input"]) == 1
+    user = await pg_session.scalar(select(User).where(User.username == "cliadmin"))
+    assert user is not None and user.email == "cli@example.com" and user.is_superuser
     monkeypatch.delenv("ZKTECO_ADMIN_PASSWORD")
-    assert cli.main(["createsuperuser", "--no-input"]) == 2
-    monkeypatch.setenv("ZKTECO_ADMIN_PASSWORD", "cli-password-1")
-    assert cli.main(["createsuperuser", "--username", "a", "--email", "bad"]) == 2
+    assert await asyncio.to_thread(cli.main, ["createsuperuser", "--no-input"]) == 2
+    monkeypatch.setenv("ZKTECO_ADMIN_PASSWORD", "cli-password-test-1")
+    assert (
+        await asyncio.to_thread(cli.main, ["createsuperuser", "--username", "a", "--email", "bad"])
+        == 2
+    )

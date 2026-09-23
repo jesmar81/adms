@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine/session (PostgreSQL+asyncpg prod, SQLite fallback tests)."""
+"""Async SQLAlchemy engine/session backed by PostgreSQL and asyncpg."""
 
 from __future__ import annotations
 
@@ -18,20 +18,11 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def _is_sqlite(url: str) -> bool:
-    return url.startswith("sqlite")
-
-
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         url = get_settings().database_url
-        kwargs: dict[str, Any] = {"future": True}
-        if _is_sqlite(url):
-            kwargs["connect_args"] = {"check_same_thread": False}
-        else:
-            kwargs["pool_size"] = 10
-            kwargs["max_overflow"] = 20
+        kwargs: dict[str, Any] = {"future": True, "pool_size": 10, "max_overflow": 20}
         _engine = create_async_engine(url, **kwargs)
     return _engine
 

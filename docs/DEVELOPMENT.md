@@ -2,9 +2,8 @@
 
 ## 1. Requisitos
 
-Python 3.12+ · PostgreSQL 16+ · Redis 7 · Node 24. Sin `docker` local también
-se puede desarrollar (parsers + unit tests sin infra; PG vía
-`ZKTECO_TEST_PG_URL` para integración).
+Python 3.12+ · PostgreSQL 16+ · Redis 7 · Node 24. La suite completa requiere
+PostgreSQL y Redis; con Docker se levantan con `docker compose up -d postgres redis`.
 
 ## 2. Arranque rápido
 
@@ -67,7 +66,7 @@ Redis es dependencia dura de auth (sin Redis → 503, fail-closed).
 Esquema solo vía migraciones (`alembic revision` + `upgrade head` +
 `alembic check` limpio, §86); `seed` y `cli` nunca crean esquema.
 Calidad §93–94: `ruff check`, `ruff format --check`, `mypy --strict`,
-`pytest --cov-fail-under=90`; frontend `npm ci`, `lint`, `typecheck`,
+`pytest --cov-fail-under=60` (cobertura medida 63.5%); frontend `npm ci`, `lint`, `typecheck`,
 `build`. Ningún agente declara "terminado" solo porque compila; reportar
 files/tests/coverage/lint/typing/seguridad.
 

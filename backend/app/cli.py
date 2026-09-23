@@ -34,6 +34,7 @@ def _read(value: str | None, env: str, prompt: str, *, secret: bool = False) -> 
 
 async def createsuperuser(username: str | None, email: str | None, *, no_input: bool) -> int:
     import app.models.device  # noqa: F401  (register all tables for FK checks)
+    import app.models.hr  # noqa: F401 (register group relationship targets)
     from app.core.config import get_settings
 
     if no_input:

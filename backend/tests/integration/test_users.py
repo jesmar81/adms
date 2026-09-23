@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import pathlib
-import subprocess
 import sys
 import uuid
 
@@ -14,6 +14,24 @@ from httpx import ASGITransport, AsyncClient
 from app.core import security
 from app.core.database import get_db
 from app.main import create_app
+
+_BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent.parent
+
+
+async def _run_cli(env: dict[str, str]) -> tuple[int | None, str, str]:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "app.cli",
+        "createsuperuser",
+        "--no-input",
+        cwd=str(_BACKEND_DIR),
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+    return process.returncode, stdout.decode(), stderr.decode()
 
 
 @pytest_asyncio.fixture
@@ -317,65 +335,37 @@ async def test_role_assignment_and_password_change(users_client, db_session) -> 
     assert {"user.create", "user.update"} <= actions
 
 
-def test_cli_createsuperuser(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    db = tmp_path / "cli.db"
+async def test_cli_createsuperuser(pg_session) -> None:  # type: ignore[no-untyped-def]
     env = dict(
         os.environ,
-        DATABASE_URL=f"sqlite+aiosqlite:///{db}",
+        DATABASE_URL=os.environ["ZKTECO_TEST_PG_URL"],
         ZKTECO_ADMIN_USERNAME="root",
         ZKTECO_ADMIN_EMAIL="root@example.com",
         ZKTECO_ADMIN_PASSWORD="enterprise-secret-1",
     )
-    # Schema must exist first (CLI never creates schema — H-03 rule).
-    import asyncio
+    # pg_session guarantees the schema was built by Alembic and clears rows.
+    first_code, first_stdout, first_stderr = await _run_cli(env)
+    assert first_code == 0, first_stderr
+    assert "created" in first_stdout
+    again_code, _, again_stderr = await _run_cli(env)
+    assert again_code == 1
+    assert "already exists" in again_stderr
+    from sqlalchemy import select
 
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from app.models.user import User
 
-    sys.path.insert(0, "backend")
-    import app.models.device  # noqa: F401
-    import app.models.user  # noqa: F401
-    from app.models.base import Base
-
-    async def _make() -> None:
-        eng = create_async_engine(f"sqlite+aiosqlite:///{db}")
-        async with eng.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await eng.dispose()
-
-    asyncio.run(_make())
-    backend_dir = pathlib.Path(__file__).resolve().parent.parent.parent
-    cmd = [sys.executable, "-m", "app.cli", "createsuperuser", "--no-input"]
-    first = subprocess.run(
-        cmd, cwd=str(backend_dir), env=env, capture_output=True, text=True, timeout=120
-    )
-    assert first.returncode == 0, first.stderr
-    assert "created" in first.stdout
-    again = subprocess.run(
-        cmd, cwd=str(backend_dir), env=env, capture_output=True, text=True, timeout=120
-    )
-    assert again.returncode == 1
-    assert "already exists" in again.stderr
+    user = await pg_session.scalar(select(User).where(User.username == "root"))
+    assert user is not None and user.email == "root@example.com" and user.is_superuser
 
 
-def test_cli_requires_migrated_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    db = tmp_path / "empty.db"
+async def test_cli_requires_migrated_schema(unmigrated_pg_url) -> None:  # type: ignore[no-untyped-def]
     env = dict(
         os.environ,
-        DATABASE_URL=f"sqlite+aiosqlite:///{db}",
+        DATABASE_URL=unmigrated_pg_url,
         ZKTECO_ADMIN_USERNAME="root",
         ZKTECO_ADMIN_EMAIL="root@example.com",
         ZKTECO_ADMIN_PASSWORD="enterprise-secret-1",
     )
-    from pathlib import Path as _Path
-
-    _backend = str(_Path(__file__).resolve().parent.parent.parent)
-    result = subprocess.run(
-        [sys.executable, "-m", "app.cli", "createsuperuser", "--no-input"],
-        cwd=_backend,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert result.returncode == 1
-    assert "alembic upgrade head" in result.stderr
+    returncode, _, stderr = await _run_cli(env)
+    assert returncode == 1
+    assert "alembic upgrade head" in stderr

@@ -489,13 +489,10 @@ async def test_userinfo_push_reconciles_pending(life_client) -> None:  # type: i
 # --- M-04 -----------------------------------------------------------------
 
 
-async def test_attlog_persistence_failure_returns_500(life_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from app.services import attendance as attendance_svc
-
-    async def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(attendance_svc, "ingest_records", _boom)
+async def test_attlog_persistence_failure_returns_500(
+    life_client, postgres_failure_trigger
+) -> None:  # type: ignore[no-untyped-def]
+    await postgres_failure_trigger("attendance_logs", "INSERT")
     response = await life_client.post(
         "/iclock/cdata?SN=FAIL500&table=ATTLOG", content="1\t2024-03-15 08:30:00\t0\t1\t"
     )
@@ -503,21 +500,24 @@ async def test_attlog_persistence_failure_returns_500(life_client, monkeypatch) 
     assert response.text != "OK"
 
 
-async def test_getrequest_failure_stays_ok_and_pending(life_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from app.services import command as command_svc
+async def test_getrequest_failure_stays_ok_and_pending(
+    life_client, db_session, postgres_failure_trigger
+) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import select
+
+    from app.models.device import DeviceCommand
 
     device_id = await _device_id(life_client, "FAILOK")
-    await life_client.post(
+    queued = await life_client.post(
         f"/api/v1/devices/{device_id}/commands", json={"command_type": "CHECK", "params": {}}
     )
-
-    async def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RuntimeError("drain down")
-
-    monkeypatch.setattr(command_svc, "drain_for_device", _boom)
+    assert queued.status_code == 201
+    await postgres_failure_trigger("device_commands", "UPDATE")
     response = await life_client.get("/iclock/getrequest?SN=FAILOK")
     assert response.status_code == 200
     assert response.text == "OK"
+    command = await db_session.scalar(select(DeviceCommand).where(DeviceCommand.command == "CHECK"))
+    assert command is not None and command.status == "pending"
 
 
 async def test_duplicate_confirm_is_idempotent(life_client, db_session) -> None:  # type: ignore[no-untyped-def]

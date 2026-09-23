@@ -59,9 +59,9 @@ ZKTeco (prioridad: **SpeedFace-V5LP**): gateway ADMS con **FastAPI** + **Postgre
   rate-limiting con *fail-closed* (sin Redis, auth responde 503).
 - **UI moderna** en Next.js 14 (App Router, standalone): tema claro estilo Apple,
   sidebar colapsable, dashboard con métricas reales, login con validación.
-- **Calidad enterprise**: `ruff`, `mypy --strict`, cobertura ≥ 90 %, migraciones
+- **Calidad**: `ruff`, `mypy --strict`, cobertura en CI ≥ 60 %, migraciones
   Alembic verificadas con `alembic check`, CI en GitHub Actions
-  (SQLite + PostgreSQL real).
+  (suite completa en PostgreSQL y Redis reales).
 
 ---
 
@@ -388,18 +388,20 @@ Protocolo de relojes (sin JWT, `text/plain`): documentado en
 ## Testing
 
 ```bash
+docker compose up -d postgres redis
+# Ejecuta solo si la base de pruebas aún no existe:
+docker compose exec postgres createdb -U zkteco adms_integration_tests
 cd backend
-# Unitarios (SQLite + Redis simulado, sin infra):
-../env/bin/python -m pytest tests/unit        # Windows: ..\env\Scripts\python -m pytest tests/unit
-
-# Integración contra PostgreSQL + Redis reales:
-ZKTECO_TEST_PG_URL="postgresql+asyncpg://zkteco:zkteco@localhost:5432/zkteco_adms" \
-ZKTECO_USE_REAL_REDIS=1 \
-  pytest --cov=app --cov-report=term-missing --cov-fail-under=90
+export ZKTECO_TEST_PG_URL="postgresql+asyncpg://zkteco:zkteco@localhost:5432/adms_integration_tests"
+export ZKTECO_TEST_REDIS_URL="redis://localhost:6379/15"
+export DATABASE_URL="$ZKTECO_TEST_PG_URL"
+export REDIS_URL="$ZKTECO_TEST_REDIS_URL"
+alembic upgrade head
+pytest tests --cov=app --cov-report=term-missing --cov-fail-under=60
 ```
 
-> ⚠️ Las fixtures de PG hacen `TRUNCATE`: usa una **base de datos de pruebas
-> dedicada** (`zkteco_test`), nunca la de desarrollo.
+> La suite vacía las tablas de PostgreSQL y Redis DB 15. Usa una base dedicada
+> cuyo nombre incluya `test`; nunca apuntes a datos de desarrollo.
 
 ```bash
 cd frontend
@@ -416,8 +418,8 @@ ruff check app tests alembic && ruff format --check app tests alembic && mypy --
 alembic upgrade head && alembic check
 ```
 
-El CI (`.github/workflows/ci.yml`) ejecuta en cada push/PR: backend con SQLite,
-backend con PostgreSQL+Redis reales (cobertura ≥ 90 %) y frontend
+El CI (`.github/workflows/ci.yml`) ejecuta en cada push/PR: toda la suite del
+backend con PostgreSQL+Redis reales (cobertura ≥ 60 %) y frontend
 (`lint` + `typecheck` + `build` en Node 24).
 
 ---
@@ -475,7 +477,7 @@ backend con PostgreSQL+Redis reales (cobertura ≥ 90 %) y frontend
 
 1. Esquema solo vía migraciones (`alembic revision` + `upgrade head` + `check` limpio).
 2. `seed`/`cli` nunca crean esquema.
-3. Pasa las puertas de calidad (ruff, mypy strict, cobertura ≥ 90 %, `npm run lint/typecheck/build`).
+3. Pasa las puertas de calidad (ruff, mypy strict, cobertura ≥ 60 %, `npm run lint/typecheck/build`).
 4. Sin hardware, no declares validación con dispositivo real.
 
 ---

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -765,8 +765,11 @@ def _overtime_out(
         employee_number=employment.employee_number,
         company_name=company.legal_name,
         report_date=request.attendance_date,
-        source=request.source,
-        status=request.status,
+        source=cast(Literal["detected", "manual"], request.source),
+        status=cast(
+            Literal["pending_hr", "pending_direction", "approved", "rejected", "cancelled"],
+            request.status,
+        ),
         scheduled_exit_at=request.scheduled_exit_at,
         detected_exit_at=request.detected_exit_at,
         minutes=request.minutes,

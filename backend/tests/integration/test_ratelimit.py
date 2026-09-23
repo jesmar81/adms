@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.asyncio import Redis
 
 from app.core import security
 from app.core.database import get_db
@@ -111,39 +113,36 @@ async def test_adms_flood_per_device_429(rl_client, settings, monkeypatch) -> No
     assert (await rl_client.get("/iclock/getrequest?SN=RLOTHER")).status_code == 200
 
 
-async def test_limits_shared_across_clients(_fake_redis) -> None:  # type: ignore[no-untyped-def]
-    """Two clients on the same Redis server share one budget (multi-worker)."""
-    from fakeredis.aioredis import FakeRedis
-
+async def test_limits_shared_across_clients(real_redis) -> None:  # type: ignore[no-untyped-def]
+    """Independent real Redis clients share the same distributed budget."""
     from app.core.ratelimit import hit
 
-    a = FakeRedis(server=_fake_redis, decode_responses=True)
-    b = FakeRedis(server=_fake_redis, decode_responses=True)
-    allowed_a, _ = await hit(a, "rl:shared:x", 2, 60)
-    allowed_b, _ = await hit(b, "rl:shared:x", 2, 60)
-    allowed_c, _ = await hit(a, "rl:shared:x", 2, 60)
-    assert (allowed_a, allowed_b, allowed_c) == (True, True, False)
+    second_worker = Redis.from_url(os.environ["ZKTECO_TEST_REDIS_URL"], decode_responses=True)
+    try:
+        allowed_a, _ = await hit(real_redis, "rl:shared:x", 2, 60)
+        allowed_b, _ = await hit(second_worker, "rl:shared:x", 2, 60)
+        allowed_c, _ = await hit(real_redis, "rl:shared:x", 2, 60)
+        assert (allowed_a, allowed_b, allowed_c) == (True, True, False)
+    finally:
+        await second_worker.aclose()
 
 
-async def test_revocation_shared_across_workers(_fake_redis, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Revocation written by one worker is visible to another (shared Redis)."""
-    from fakeredis.aioredis import FakeRedis
-
+async def test_revocation_shared_across_workers(real_redis) -> None:  # type: ignore[no-untyped-def]
+    """Revocation written by one Redis client is visible through another."""
     from app.core import revocation
 
-    monkeypatch.setattr(
-        revocation, "get_redis", lambda: FakeRedis(server=_fake_redis, decode_responses=True)
-    )
-    await revocation.revoke("jti-worker-a", 60)
-    assert await revocation.is_revoked("jti-worker-a") is True
-    assert await revocation.is_revoked("jti-unknown") is False
+    second_worker = Redis.from_url(os.environ["ZKTECO_TEST_REDIS_URL"], decode_responses=True)
+    try:
+        await revocation.revoke("jti-worker-a", 60)
+        assert await second_worker.get("revoked:jti-worker-a") == "1"
+        assert await revocation.is_revoked("jti-worker-a") is True
+        assert await revocation.is_revoked("jti-unknown") is False
+    finally:
+        await second_worker.aclose()
 
 
-async def test_redis_down_login_fail_closed(rl_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    def _boom(cls, *args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RedisConnectionError("down")
-
-    monkeypatch.setattr("redis.asyncio.Redis.from_url", classmethod(_boom))
+async def test_redis_down_login_fail_closed(rl_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "redis_url", "redis://127.0.0.1:1/15")
     get_redis.cache_clear()
     response = await rl_client.post(
         "/api/v1/auth/login", json={"username": "rluser", "password": "s3cret!"}
@@ -152,7 +151,7 @@ async def test_redis_down_login_fail_closed(rl_client, monkeypatch) -> None:  # 
     assert response.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
 
 
-async def test_redis_down_authed_503(rl_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+async def test_redis_down_authed_503(rl_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     tokens = (
         await rl_client.post(
             "/api/v1/auth/login", json={"username": "rluser", "password": "s3cret!"}
@@ -161,20 +160,14 @@ async def test_redis_down_authed_503(rl_client, monkeypatch) -> None:  # type: i
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}
     assert (await rl_client.get("/api/v1/devices", headers=headers)).status_code == 200
 
-    def _boom(cls, *args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RedisConnectionError("down")
-
-    monkeypatch.setattr("redis.asyncio.Redis.from_url", classmethod(_boom))
+    monkeypatch.setattr(settings, "redis_url", "redis://127.0.0.1:1/15")
     get_redis.cache_clear()
     response = await rl_client.get("/api/v1/devices", headers=headers)
     assert response.status_code == 503
 
 
-async def test_redis_down_adms_fail_open(rl_client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    def _boom(cls, *args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RedisConnectionError("down")
-
-    monkeypatch.setattr("redis.asyncio.Redis.from_url", classmethod(_boom))
+async def test_redis_down_adms_fail_open(rl_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "redis_url", "redis://127.0.0.1:1/15")
     get_redis.cache_clear()
     # Attendance ingestion stays available even without Redis (documented trade-off).
     response = await rl_client.post(

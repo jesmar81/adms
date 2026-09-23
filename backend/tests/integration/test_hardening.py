@@ -162,5 +162,5 @@ async def test_xff_trusted_proxy_only(hard_client, db_session, settings, monkeyp
     result = await db_session.execute(
         select(AuditLog).where(AuditLog.action == "login").order_by(AuditLog.created_at.desc())
     )
-    assert result.scalars().first().ip_address == "9.9.9.9"
+    assert str(result.scalars().first().ip_address) == "9.9.9.9"
     monkeypatch.setattr(settings, "trusted_proxies_raw", "")

@@ -118,11 +118,11 @@ async def test_seed_roles_permissions() -> None:
     await main()
 
 
-def test_health_ready_and_openapi(app_client) -> None:  # type: ignore[no-untyped-def]
-    assert app_client.get("/health").status_code == 200
-    ready = app_client.get("/ready")
+async def test_health_ready_and_openapi(app_client) -> None:  # type: ignore[no-untyped-def]
+    assert (await app_client.get("/health")).status_code == 200
+    ready = await app_client.get("/ready")
     assert ready.status_code in (200, 503)
-    docs = app_client.get("/openapi.json")
+    docs = await app_client.get("/openapi.json")
     assert docs.status_code == 200
 
 
@@ -136,6 +136,6 @@ def test_device_offline_and_naive_handling() -> None:
     assert not device_svc.is_online(device)
     device.last_activity_at = datetime.now(UTC) - timedelta(seconds=10000)
     assert not device_svc.is_online(device)
-    # Naive datetimes (SQLite round-trip) are treated as UTC.
+    # Naive timestamps from legacy inputs are interpreted as UTC.
     device.last_activity_at = datetime.now(UTC).replace(tzinfo=None)
     assert device_svc.is_online(device)

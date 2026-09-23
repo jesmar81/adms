@@ -17,7 +17,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adms.parser import AttendanceRecord
@@ -30,31 +29,14 @@ log = get_logger("attendance")
 
 _SMALLINT_MIN = -(2**15)
 _SMALLINT_MAX = 2**15 - 1
-# PostgreSQL caps statements at 65535 bind parameters and SQLite builds at
-# 32766 variables; chunk well below both (1000 rows × 17 cols = 17000).
+# PostgreSQL caps statements at 65535 bind parameters; chunk below that
+# (1000 rows × 17 cols = 17000).
 _CHUNK_SIZE = 1000
 
 
 def _chunks[T](items: list[T], size: int = _CHUNK_SIZE) -> Iterator[list[T]]:
     for start in range(0, len(items), size):
         yield items[start : start + size]
-
-
-def _dialect_name(session: AsyncSession) -> str:
-    try:
-        bind = session.get_bind()
-        if bind is None:
-            return "postgresql"
-        return str(bind.dialect.name)
-    except Exception:
-        return "postgresql"
-
-
-def _coerce_ts(session: AsyncSession, value: datetime) -> datetime:
-    """SQLite drops tzinfo on storage; compare/store naive UTC there (PG keeps tz)."""
-    if _dialect_name(session) == "sqlite":
-        return value.astimezone(UTC).replace(tzinfo=None)
-    return value
 
 
 def _in_smallint(value: int) -> bool:
@@ -149,8 +131,6 @@ async def ingest_records(
     if not records:
         return 0
     now = datetime.now(UTC)
-    dialect = _dialect_name(session)
-
     # 1) One user-map lookup for the whole batch.
     pins = {record.user_id for record in records}
     user_map: dict[str, uuid.UUID] = {}
@@ -169,7 +149,7 @@ async def ingest_records(
         if not _in_smallint(record.status) or not _in_smallint(record.verify_mode):
             skipped_range += 1
             continue
-        normalized.append((record, _coerce_ts(session, record.timestamp), record.work_code or ""))
+        normalized.append((record, record.timestamp, record.work_code or ""))
     if skipped_range:
         log.warning("attendance_rows_out_of_range", count=skipped_range)
     if not normalized:
@@ -226,11 +206,10 @@ async def ingest_records(
     ]
     if not values:
         return 0
-    insert_fn = pg_insert if dialect == "postgresql" else sqlite_insert
     inserted_ids: list[uuid.UUID] = []
     for value_chunk in _chunks(values):
         stmt = (
-            insert_fn(AttendanceLog)
+            pg_insert(AttendanceLog)
             .values(value_chunk)
             .on_conflict_do_nothing(
                 index_elements=[
