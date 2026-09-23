@@ -73,6 +73,7 @@ export interface WeeklyCardDay {
   mark_count: number;
   late_minutes: number;
   early_departure_minutes: number;
+  overtime_minutes: number;
   adjustment_id: string | null;
   adjustment_reason: string | null;
 }
@@ -117,6 +118,46 @@ export interface PunctualityReport {
   expected_exit_at: string | null;
   last_mark_at: string | null;
   early_departure_minutes: number;
+}
+
+export interface AttendanceDashboard {
+  company_id: string;
+  report_date: string;
+  scheduled_workers: number;
+  present_workers: number;
+  on_time_workers: number;
+  late_workers: number;
+  late_minutes: number;
+  absent_workers: number;
+  justified_absences: number;
+  raw_marks: number;
+  unresolved_marks: number;
+  overtime_pending_hr: number;
+  overtime_pending_direction: number;
+  overtime_authorized_minutes: number;
+}
+
+export interface OvertimeRequest {
+  id: string;
+  person_id: string;
+  employment_id: string;
+  worker_name: string;
+  employee_number: string;
+  company_name: string;
+  report_date: string;
+  source: "detected" | "manual";
+  status: "pending_hr" | "pending_direction" | "approved" | "rejected" | "cancelled";
+  scheduled_exit_at: string | null;
+  detected_exit_at: string | null;
+  minutes: number;
+  reviewed_minutes: number | null;
+  authorized_minutes: number | null;
+  reason: string;
+  review_note: string | null;
+  authorization_note: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+  authorized_at: string | null;
 }
 
 export interface PersonAttendancePage {

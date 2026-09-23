@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import deps
@@ -18,19 +18,25 @@ from app.api.v1.schemas import (
     AbsenceReportOut,
     AttendanceAdjustmentIn,
     AttendanceAdjustmentOut,
+    AttendanceDashboardOut,
     DailyArrivalReportOut,
+    OvertimeAuthorizationIn,
+    OvertimeManualIn,
+    OvertimeRequestOut,
+    OvertimeReviewIn,
     PunctualityReportOut,
     WeeklyCardDayOut,
     WeeklyCardReportOut,
 )
 from app.core.database import get_db
-from app.models.device import AttendanceAttribution, AttendanceLog
+from app.models.device import AttendanceAttribution, AttendanceLog, Device
 from app.models.hr import (
     Address,
     AttendanceAdjustment,
     Company,
     Employment,
     Holiday,
+    OvertimeRequest,
     Person,
     ScheduleAssignment,
     ScheduleSlot,
@@ -331,20 +337,25 @@ def _day(
         if expected_exit and exit_at
         else 0
     )
-    kind = (
-        "LABORADO CON RETARDO Y SALIDA FUERA DE HORARIO"
-        if late and early
-        else "LABORADO CON RETARDO"
-        if late
-        else "LABORADO CON SALIDA FUERA DE HORARIO"
-        if early
-        else "LABORAL"
+    overtime = (
+        max(0, int((exit_at - expected_exit).total_seconds() // 60))
+        if expected_exit and exit_at
+        else 0
     )
+    incidents = []
+    if late:
+        incidents.append("RETARDO")
+    if early:
+        incidents.append("SALIDA FUERA DE HORARIO")
+    if overtime:
+        incidents.append("TIEMPO EXTRA DETECTADO")
+    kind = "LABORADO CON " + " Y ".join(incidents) if incidents else "LABORAL"
     return WeeklyCardDayOut.model_validate(
         {
             "day_kind": kind,
             "late_minutes": late,
             "early_departure_minutes": early,
+            "overtime_minutes": overtime,
             **kwargs,
         }
     )
@@ -430,6 +441,125 @@ def _card(
         week_start=week_start,
         week_end=week_start + timedelta(days=6),
         days=days,
+    )
+
+
+@reports_router.get("/dashboard", response_model=AttendanceDashboardOut)
+async def attendance_dashboard(
+    company_id: uuid.UUID,
+    report_date: date = Query(
+        default_factory=lambda: datetime.now(ZoneInfo("America/Mexico_City")).date()
+    ),
+    user: User = Depends(deps.require_permission("attendance.read")),
+    session: AsyncSession = Depends(get_db),
+) -> AttendanceDashboardOut:
+    """Return schedule-aware executive metrics without treating raw marks as payroll facts."""
+    company = await access_svc.require_company(session, user, company_id)
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
+        session,
+        report_date,
+        report_date,
+        company_id=company_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
+    )
+    scheduled_workers = present_workers = on_time_workers = late_workers = late_minutes = 0
+    absent_workers = justified_absences = 0
+    for employment, _, _ in workers:
+        expected = _bounds(
+            employment,
+            report_date,
+            assignments.get(employment.id, []),
+            schedules,
+            slots,
+            holidays,
+        )
+        if expected is None:
+            continue
+        scheduled_workers += 1
+        adjustment = adjustments.get((employment.id, report_date))
+        if adjustment and adjustment.absence_kind:
+            absent_workers += 1
+            justified_absences += int(adjustment.absence_kind == "justified")
+            continue
+        entry, _, _, _ = _events(
+            _local_marks(marks.get(employment.id, []), report_date, expected[0].tzinfo or UTC),
+            adjustment,
+        )
+        if entry is None:
+            absent_workers += 1
+            continue
+        present_workers += 1
+        delay = max(0, int((entry - expected[0]).total_seconds() // 60) - expected[2])
+        if delay:
+            late_workers += 1
+            late_minutes += delay
+        else:
+            on_time_workers += 1
+
+    timezone = ZoneInfo(company.timezone)
+    mark_start = datetime.combine(report_date, time.min, tzinfo=timezone).astimezone(UTC)
+    next_day_start = datetime.combine(report_date + timedelta(days=1), time.min, tzinfo=timezone)
+    mark_end = next_day_start.astimezone(UTC)
+    company_device_ids = (
+        select(Device.id).join(Site, Device.site_id == Site.id).where(Site.company_id == company_id)
+    )
+    raw_marks = (
+        await session.scalar(
+            select(func.count())
+            .select_from(AttendanceLog)
+            .where(
+                AttendanceLog.device_id.in_(company_device_ids),
+                AttendanceLog.recorded_at >= mark_start,
+                AttendanceLog.recorded_at < mark_end,
+            )
+        )
+        or 0
+    )
+    unresolved_marks = (
+        await session.scalar(
+            select(func.count())
+            .select_from(AttendanceAttribution)
+            .join(AttendanceLog, AttendanceAttribution.attendance_log_id == AttendanceLog.id)
+            .where(
+                AttendanceLog.device_id.in_(company_device_ids),
+                AttendanceLog.recorded_at >= mark_start,
+                AttendanceLog.recorded_at < mark_end,
+                AttendanceAttribution.status.in_(("ambiguous", "unassigned")),
+            )
+        )
+        or 0
+    )
+    overtime_rows = (
+        await session.execute(
+            select(
+                OvertimeRequest.status,
+                func.count(OvertimeRequest.id),
+                func.coalesce(func.sum(OvertimeRequest.authorized_minutes), 0),
+            )
+            .join(Employment, OvertimeRequest.employment_id == Employment.id)
+            .where(
+                Employment.company_id == company_id,
+                OvertimeRequest.attendance_date == report_date,
+            )
+            .group_by(OvertimeRequest.status)
+        )
+    ).all()
+    overtime = {status: (count, int(minutes)) for status, count, minutes in overtime_rows}
+    return AttendanceDashboardOut(
+        company_id=company_id,
+        report_date=report_date,
+        scheduled_workers=scheduled_workers,
+        present_workers=present_workers,
+        on_time_workers=on_time_workers,
+        late_workers=late_workers,
+        late_minutes=late_minutes,
+        absent_workers=absent_workers,
+        justified_absences=justified_absences,
+        raw_marks=raw_marks,
+        unresolved_marks=unresolved_marks,
+        overtime_pending_hr=overtime.get("pending_hr", (0, 0))[0],
+        overtime_pending_direction=overtime.get("pending_direction", (0, 0))[0],
+        overtime_authorized_minutes=overtime.get("approved", (0, 0))[1],
     )
 
 
@@ -624,6 +754,349 @@ async def punctuality(
     return result
 
 
+def _overtime_out(
+    request: OvertimeRequest, employment: Employment, person: Person, company: Company
+) -> OvertimeRequestOut:
+    return OvertimeRequestOut(
+        id=request.id,
+        person_id=person.id,
+        employment_id=employment.id,
+        worker_name=_worker_name(person),
+        employee_number=employment.employee_number,
+        company_name=company.legal_name,
+        report_date=request.attendance_date,
+        source=request.source,
+        status=request.status,
+        scheduled_exit_at=request.scheduled_exit_at,
+        detected_exit_at=request.detected_exit_at,
+        minutes=request.minutes,
+        reviewed_minutes=request.reviewed_minutes,
+        authorized_minutes=request.authorized_minutes,
+        reason=request.reason,
+        review_note=request.review_note,
+        authorization_note=request.authorization_note,
+        created_at=request.created_at,
+        reviewed_at=request.reviewed_at,
+        authorized_at=request.authorized_at,
+    )
+
+
+async def _overtime_context(
+    session: AsyncSession, request_id: uuid.UUID, user: User
+) -> tuple[OvertimeRequest, Employment, Person, Company]:
+    row = (
+        await session.execute(
+            select(OvertimeRequest, Employment, Person, Company)
+            .join(Employment, OvertimeRequest.employment_id == Employment.id)
+            .join(Person, Employment.person_id == Person.id)
+            .join(Company, Employment.company_id == Company.id)
+            .where(OvertimeRequest.id == request_id)
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Overtime request not found")
+    request, employment, person, company = row
+    await access_svc.require_company(session, user, company.id)
+    return request, employment, person, company
+
+
+@reports_router.get("/overtime", response_model=list[OvertimeRequestOut])
+async def list_overtime(
+    company_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+    user: User = Depends(deps.require_permission("overtime.read")),
+    session: AsyncSession = Depends(get_db),
+) -> list[OvertimeRequestOut]:
+    if date_to < date_from or (date_to - date_from).days > 366:
+        raise HTTPException(status_code=422, detail="Use an ordered range of at most 366 days")
+    await access_svc.require_company(session, user, company_id)
+    rows = (
+        await session.execute(
+            select(OvertimeRequest, Employment, Person, Company)
+            .join(Employment, OvertimeRequest.employment_id == Employment.id)
+            .join(Person, Employment.person_id == Person.id)
+            .join(Company, Employment.company_id == Company.id)
+            .where(
+                Employment.company_id == company_id,
+                OvertimeRequest.attendance_date >= date_from,
+                OvertimeRequest.attendance_date <= date_to,
+            )
+            .order_by(OvertimeRequest.attendance_date.desc(), Person.last_name, Person.first_name)
+        )
+    ).tuples()
+    return [
+        _overtime_out(request, employment, person, company)
+        for request, employment, person, company in rows
+    ]
+
+
+@reports_router.post("/overtime/detect", response_model=list[OvertimeRequestOut], status_code=201)
+async def detect_overtime(
+    company_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+    user: User = Depends(deps.require_permission("overtime.request")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> list[OvertimeRequestOut]:
+    if date_to < date_from or (date_to - date_from).days > 366:
+        raise HTTPException(status_code=422, detail="Use an ordered range of at most 366 days")
+    await access_svc.require_company(session, user, company_id)
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
+        session,
+        date_from,
+        date_to,
+        company_id=company_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
+    )
+    employment_ids = [employment.id for employment, _, _ in workers]
+    existing = (
+        set(
+            (
+                await session.execute(
+                    select(OvertimeRequest.employment_id, OvertimeRequest.attendance_date).where(
+                        OvertimeRequest.employment_id.in_(employment_ids),
+                        OvertimeRequest.attendance_date >= date_from,
+                        OvertimeRequest.attendance_date <= date_to,
+                    )
+                )
+            ).tuples()
+        )
+        if employment_ids
+        else set()
+    )
+    created: list[tuple[OvertimeRequest, Employment, Person, Company]] = []
+    report_day = date_from
+    while report_day <= date_to:
+        for employment, person, company in workers:
+            if (employment.id, report_day) in existing:
+                continue
+            expected = _bounds(
+                employment,
+                report_day,
+                assignments.get(employment.id, []),
+                schedules,
+                slots,
+                holidays,
+            )
+            adjustment = adjustments.get((employment.id, report_day))
+            if expected is None or expected[1] is None or (adjustment and adjustment.absence_kind):
+                continue
+            # Only terminal evidence later than the scheduled exit creates a candidate.
+            raw_marks = _local_marks(
+                marks.get(employment.id, []), report_day, expected[0].tzinfo or UTC
+            )
+            _, _, _, detected_exit = _raw_events(raw_marks)
+            if detected_exit is None or detected_exit <= expected[1]:
+                continue
+            minutes = int((detected_exit - expected[1]).total_seconds() // 60)
+            if minutes <= 0:
+                continue
+            request = OvertimeRequest(
+                employment_id=employment.id,
+                attendance_date=report_day,
+                source="detected",
+                status="pending_hr",
+                scheduled_exit_at=expected[1],
+                detected_exit_at=detected_exit,
+                minutes=minutes,
+                reason="Marca posterior a la salida programada; pendiente de revisión de RR. HH.",
+                created_by=user.id,
+            )
+            session.add(request)
+            created.append((request, employment, person, company))
+        report_day += timedelta(days=1)
+    await session.flush()
+    for request, _, _, _ in created:
+        await audit_svc.record(
+            session,
+            action="overtime.detect",
+            user_id=user.id,
+            resource_type="overtime_request",
+            resource_id=request.id,
+            request_id=rid,
+            metadata={"source": "terminal_mark", "minutes": request.minutes},
+        )
+    await session.commit()
+    return [
+        _overtime_out(request, employment, person, company)
+        for request, employment, person, company in created
+    ]
+
+
+@reports_router.post("/overtime/manual", response_model=OvertimeRequestOut, status_code=201)
+async def create_manual_overtime(
+    payload: OvertimeManualIn,
+    user: User = Depends(deps.require_permission("overtime.request")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> OvertimeRequestOut:
+    await access_svc.require_employment(session, user, payload.employment_id)
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
+        session,
+        payload.attendance_date,
+        payload.attendance_date,
+        employment_id=payload.employment_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
+    )
+    if not workers:
+        raise HTTPException(
+            status_code=422, detail="Employment is not active on the requested date"
+        )
+    employment, person, company = workers[0]
+    expected = _bounds(
+        employment,
+        payload.attendance_date,
+        assignments.get(employment.id, []),
+        schedules,
+        slots,
+        holidays,
+    )
+    adjustment = adjustments.get((employment.id, payload.attendance_date))
+    if expected is None or expected[1] is None or (adjustment and adjustment.absence_kind):
+        raise HTTPException(
+            status_code=422, detail="A working day with a scheduled exit is required"
+        )
+    raw_marks = _local_marks(
+        marks.get(employment.id, []), payload.attendance_date, expected[0].tzinfo or UTC
+    )
+    _, _, _, detected_exit = _raw_events(raw_marks)
+    if detected_exit is not None and detected_exit > expected[1]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A post-shift terminal mark exists; detect it instead of creating manual overtime"
+            ),
+        )
+    existing = await session.scalar(
+        select(OvertimeRequest).where(
+            OvertimeRequest.employment_id == employment.id,
+            OvertimeRequest.attendance_date == payload.attendance_date,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail="An overtime request already exists for this worker-day"
+        )
+    request = OvertimeRequest(
+        employment_id=employment.id,
+        attendance_date=payload.attendance_date,
+        source="manual",
+        status="pending_hr",
+        scheduled_exit_at=expected[1],
+        minutes=payload.minutes,
+        reason=payload.reason.strip(),
+        created_by=user.id,
+    )
+    session.add(request)
+    await session.flush()
+    await audit_svc.record(
+        session,
+        action="overtime.manual_create",
+        user_id=user.id,
+        resource_type="overtime_request",
+        resource_id=request.id,
+        request_id=rid,
+        metadata={"minutes": request.minutes},
+    )
+    await session.commit()
+    await session.refresh(request)
+    return _overtime_out(request, employment, person, company)
+
+
+@reports_router.post("/overtime/{overtime_id}/review", response_model=OvertimeRequestOut)
+async def review_overtime(
+    overtime_id: uuid.UUID,
+    payload: OvertimeReviewIn,
+    user: User = Depends(deps.require_permission("overtime.review")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> OvertimeRequestOut:
+    request, employment, person, company = await _overtime_context(session, overtime_id, user)
+    if request.status != "pending_hr":
+        raise HTTPException(status_code=409, detail="Overtime request is not pending HR review")
+    if request.created_by == user.id:
+        raise HTTPException(
+            status_code=409, detail="Requester cannot review the same overtime request"
+        )
+    if payload.decision == "send_to_direction" and payload.reviewed_minutes is None:
+        raise HTTPException(
+            status_code=422, detail="Reviewed minutes are required before direction approval"
+        )
+    if payload.decision == "reject" and payload.reviewed_minutes is not None:
+        raise HTTPException(
+            status_code=422, detail="Rejected requests cannot include reviewed minutes"
+        )
+    request.reviewed_by = user.id
+    request.reviewed_at = datetime.now(UTC)
+    request.review_note = payload.note.strip()
+    request.reviewed_minutes = payload.reviewed_minutes
+    request.status = "pending_direction" if payload.decision == "send_to_direction" else "rejected"
+    await audit_svc.record(
+        session,
+        action="overtime.hr_review",
+        user_id=user.id,
+        resource_type="overtime_request",
+        resource_id=request.id,
+        request_id=rid,
+        metadata={"decision": payload.decision, "reviewed_minutes": payload.reviewed_minutes},
+    )
+    await session.commit()
+    await session.refresh(request)
+    return _overtime_out(request, employment, person, company)
+
+
+@reports_router.post("/overtime/{overtime_id}/authorize", response_model=OvertimeRequestOut)
+async def authorize_overtime(
+    overtime_id: uuid.UUID,
+    payload: OvertimeAuthorizationIn,
+    user: User = Depends(deps.require_permission("overtime.approve")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> OvertimeRequestOut:
+    request, employment, person, company = await _overtime_context(session, overtime_id, user)
+    if request.status != "pending_direction":
+        raise HTTPException(
+            status_code=409, detail="Overtime request is not pending direction approval"
+        )
+    if user.id in {request.created_by, request.reviewed_by}:
+        raise HTTPException(
+            status_code=409, detail="Requester or HR reviewer cannot authorize overtime"
+        )
+    if payload.decision == "approve":
+        if payload.authorized_minutes is None:
+            raise HTTPException(status_code=422, detail="Authorized minutes are required")
+        if (
+            request.reviewed_minutes is None
+            or payload.authorized_minutes > request.reviewed_minutes
+        ):
+            raise HTTPException(
+                status_code=422, detail="Authorized minutes cannot exceed the HR review"
+            )
+    elif payload.authorized_minutes is not None:
+        raise HTTPException(
+            status_code=422, detail="Rejected requests cannot include authorized minutes"
+        )
+    request.authorized_by = user.id
+    request.authorized_at = datetime.now(UTC)
+    request.authorization_note = payload.note.strip()
+    request.authorized_minutes = payload.authorized_minutes
+    request.status = "approved" if payload.decision == "approve" else "rejected"
+    await audit_svc.record(
+        session,
+        action="overtime.direction_authorize",
+        user_id=user.id,
+        resource_type="overtime_request",
+        resource_id=request.id,
+        request_id=rid,
+        metadata={"decision": payload.decision, "authorized_minutes": payload.authorized_minutes},
+    )
+    await session.commit()
+    await session.refresh(request)
+    return _overtime_out(request, employment, person, company)
+
+
 def _validate_adjustment(payload: AttendanceAdjustmentIn) -> None:
     times = [payload.entry_at, payload.meal_out_at, payload.meal_in_at, payload.exit_at]
     if payload.absence_kind and any(times):
@@ -740,32 +1213,35 @@ def _pdf_page(card: WeeklyCardReportOut) -> bytes:
     )
     for x, label in (
         (42, "Día"),
-        (116, "Clasificación"),
-        (262, "Entrada"),
-        (323, "Salida comida"),
-        (405, "Regreso comida"),
-        (490, "Salida"),
+        (105, "Clasificación"),
+        (245, "Entrada"),
+        (300, "Salida comida"),
+        (378, "Regreso comida"),
+        (462, "Salida"),
+        (520, "Extra"),
     ):
         text(x, 678, label, 8)
     y = 649
     names = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
     for index, day in enumerate(card.days):
         text(42, y, f"{names[index]} {day.report_date.strftime('%d/%m')}", 8)
-        text(116, y, day.day_kind, 7)
+        text(105, y, day.day_kind, 7)
         for x, value in (
-            (262, day.entry_at),
-            (343, day.meal_out_at),
-            (425, day.meal_in_at),
-            (500, day.exit_at),
+            (245, day.entry_at),
+            (323, day.meal_out_at),
+            (405, day.meal_in_at),
+            (474, day.exit_at),
         ):
             text(x, y, value.strftime("%H:%M") if value else "—", 8)
-        if day.late_minutes or day.early_departure_minutes:
+        text(520, y, f"{day.overtime_minutes} min" if day.overtime_minutes else "—", 7)
+        if day.late_minutes or day.early_departure_minutes or day.overtime_minutes:
             text(
-                116,
+                105,
                 y - 11,
                 "Retardo: "
                 f"{day.late_minutes} min; salida fuera de horario: "
-                f"{day.early_departure_minutes} min",
+                f"{day.early_departure_minutes} min; tiempo extra detectado: "
+                f"{day.overtime_minutes} min",
                 7,
             )
         commands.append(f"42 {y - 18} m 553 {y - 18} l S")

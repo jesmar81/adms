@@ -405,6 +405,62 @@ class AttendanceAdjustment(Base, UUIDPKMixin, TimestampMixin):
     )
 
 
+class OvertimeRequest(Base, UUIDPKMixin, TimestampMixin):
+    """A governed overtime candidate; raw terminal evidence remains immutable."""
+
+    __tablename__ = "overtime_requests"
+
+    employment_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("employments.id", ondelete="RESTRICT"), nullable=False
+    )
+    attendance_date: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending_hr", nullable=False)
+    scheduled_exit_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    detected_exit_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    reviewed_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    authorized_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    authorized_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    authorization_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("source IN ('detected', 'manual')", name="ck_overtime_requests_source"),
+        CheckConstraint(
+            "status IN ('pending_hr', 'pending_direction', 'approved', 'rejected', 'cancelled')",
+            name="ck_overtime_requests_status",
+        ),
+        CheckConstraint("minutes BETWEEN 1 AND 720", name="ck_overtime_requests_minutes"),
+        CheckConstraint(
+            "reviewed_minutes IS NULL OR reviewed_minutes BETWEEN 1 AND 720",
+            name="ck_overtime_requests_reviewed_minutes",
+        ),
+        CheckConstraint(
+            "authorized_minutes IS NULL OR authorized_minutes BETWEEN 1 AND 720",
+            name="ck_overtime_requests_authorized_minutes",
+        ),
+        UniqueConstraint("employment_id", "attendance_date", name="uq_overtime_requests_day"),
+        Index("ix_overtime_requests_employment_day", "employment_id", "attendance_date"),
+        Index("ix_overtime_requests_status", "status"),
+    )
+
+
 class EnrollmentRequest(Base, UUIDPKMixin, TimestampMixin):
     __tablename__ = "enrollment_requests"
 

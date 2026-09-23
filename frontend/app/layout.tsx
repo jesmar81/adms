@@ -6,7 +6,7 @@ export const metadata = { title: "ZKTeco ADMS", description: "Attendance platfor
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
-      <body className="bg-surface-canvas font-sans text-zinc-900 antialiased">
+      <body className="bg-surface-canvas font-sans text-foreground antialiased">
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

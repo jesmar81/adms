@@ -14,12 +14,12 @@ interface EmptyStateProps {
 
 export function EmptyState({ icon, title, description, action }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center rounded-2xl border border-dashed border-line-soft bg-white/70 px-6 py-14 text-center">
-      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-zinc-500">
+    <div className="flex flex-col items-center rounded-xl border border-dashed border-line-soft bg-surface-card/70 px-6 py-14 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-surface-raised text-muted">
         {icon ?? <Inbox className="h-5 w-5" aria-hidden />}
       </span>
-      <h3 className="mt-4 text-[15px] font-semibold tracking-tight text-zinc-900">{title}</h3>
-      {description && <p className="mt-1.5 max-w-sm text-sm text-zinc-500">{description}</p>}
+      <h3 className="mt-4 text-[15px] font-semibold tracking-tight text-foreground">{title}</h3>
+      {description && <p className="mt-1.5 max-w-sm text-sm text-muted">{description}</p>}
       {action && <div className="mt-5">{action}</div>}
     </div>
   );
@@ -27,8 +27,8 @@ export function EmptyState({ icon, title, description, action }: EmptyStateProps
 
 function SkeletonBlock({ className = "" }: { className?: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-xl bg-black/[0.06] ${className}`}>
-      <span aria-hidden className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/60 to-transparent" />
+    <div className={`relative overflow-hidden rounded-xl bg-surface-raised ${className}`}>
+      <span aria-hidden className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" />
     </div>
   );
 }
@@ -69,14 +69,14 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
     message = error.message;
   }
   return (
-    <div className="flex flex-col items-center rounded-2xl border border-red-200 bg-red-50 px-6 py-12 text-center">
-      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-100 text-red-600">
+    <div className="flex flex-col items-center rounded-xl border border-rose-500/25 bg-rose-500/10 px-6 py-12 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-500/15 text-rose-300">
         <AlertTriangle className="h-5 w-5" aria-hidden />
       </span>
-      <h3 className="mt-4 text-[15px] font-semibold tracking-tight text-zinc-900">
+      <h3 className="mt-4 text-[15px] font-semibold tracking-tight text-foreground">
         Algo salió mal{status ? ` (error ${status})` : ""}
       </h3>
-      <p className="mt-1.5 max-w-sm text-sm text-zinc-500">{message}</p>
+      <p className="mt-1.5 max-w-sm text-sm text-muted">{message}</p>
       {onRetry && (
         <div className="mt-5">
           <Button onClick={onRetry}>Reintentar</Button>

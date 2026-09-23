@@ -215,7 +215,7 @@ export default function Page() {
               )}
             </Field>
             <Field label="Rol">
-              {(id) => <Select id={id} value={roleName} onChange={(event) => setRoleName(event.target.value)}><option value="viewer">Consulta</option><option value="operator">Operación</option>{currentUser?.is_superuser ? <option value="admin">Administración</option> : null}</Select>}
+              {(id) => <Select id={id} value={roleName} onChange={(event) => setRoleName(event.target.value)}><option value="viewer">Consulta</option><option value="operator">Operación</option>{currentUser?.is_superuser ? <><option value="hr">Recursos humanos</option><option value="director">Dirección</option><option value="admin">Administración</option></> : null}</Select>}
             </Field>
             <div className="sm:col-span-2 xl:col-span-4">
               <p className="text-[13px] font-medium text-zinc-700">Grupos completos</p>
@@ -309,7 +309,7 @@ export default function Page() {
         footer={<><Button variant="ghost" icon={<X className="h-4 w-4" />} className="w-10 !px-0" aria-label="Cancelar" title="Cancelar" onClick={() => setEditing(null)} /><Button variant="primary" icon={<Save className="h-4 w-4" />} className="w-10 !px-0" aria-label="Guardar acceso" title="Guardar acceso" onClick={() => void saveEdit()} loading={savingEdit} /></>}
       >
         <div className="grid gap-4">
-          <Field label="Rol">{(id) => <Select id={id} value={editRoleName} onChange={(event) => setEditRoleName(event.target.value)}><option value="viewer">Consulta</option><option value="operator">Operación</option>{currentUser?.is_superuser ? <option value="admin">Administración</option> : null}</Select>}</Field>
+          <Field label="Rol">{(id) => <Select id={id} value={editRoleName} onChange={(event) => setEditRoleName(event.target.value)}><option value="viewer">Consulta</option><option value="operator">Operación</option>{currentUser?.is_superuser ? <><option value="hr">Recursos humanos</option><option value="director">Dirección</option><option value="admin">Administración</option></> : null}</Select>}</Field>
           <div>
             <p className="text-[13px] font-medium text-zinc-700">Grupos completos</p>
             <div className="mt-2 flex flex-wrap gap-2">{delegableGroups.map((group) => <label key={group.id} className="flex cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 py-2 text-sm"><input type="checkbox" checked={editGroupIds.includes(group.id)} onChange={(event) => setEditGroupIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} />{group.name}</label>)}</div>

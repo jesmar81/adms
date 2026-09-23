@@ -3,10 +3,10 @@ import type { ReactNode } from "react";
 export type Tone = "emerald" | "amber" | "red" | "zinc" | "sky";
 
 const TONES: Record<Tone, string> = {
-  emerald: "border-emerald-600/20 bg-emerald-50 text-emerald-700",
-  amber: "border-amber-600/25 bg-amber-50 text-amber-700",
-  red: "border-red-600/20 bg-red-50 text-red-700",
-  zinc: "border-black/[0.08] bg-black/[0.04] text-zinc-600",
+  emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+  amber: "border-amber-500/25 bg-amber-500/10 text-amber-300",
+  red: "border-rose-500/25 bg-rose-500/10 text-rose-300",
+  zinc: "border-line-subtle bg-surface-raised text-muted",
   sky: "border-accent/25 bg-accent-soft text-accent",
 };
 
@@ -65,7 +65,7 @@ export function StatusDot({ status, showLabel = true }: { status: string; showLa
           className={`relative inline-flex h-2 w-2 rounded-full ${DOT_COLORS[meta.tone]}`}
         />
       </span>
-      {showLabel && <span className="text-zinc-700">{meta.label}</span>}
+      {showLabel && <span className="text-foreground">{meta.label}</span>}
     </span>
   );
 }

@@ -35,29 +35,29 @@ export function Modal({ open, onClose, title, description, children, footer }: M
       <button
         aria-label="Cerrar diálogo"
         onClick={onClose}
-        className="absolute inset-0 animate-fade-in cursor-default bg-zinc-900/30 backdrop-blur-[2px]"
+        className="absolute inset-0 animate-fade-in cursor-default bg-black/70 backdrop-blur-sm"
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-lg animate-modal-in rounded-2xl border border-line-subtle bg-white p-6 shadow-pop"
+        className="relative w-full max-w-lg animate-modal-in rounded-[10px] border border-line-soft bg-surface-card p-5 shadow-pop"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">{title}</h2>
-            {description && <p className="mt-1 text-sm text-zinc-500">{description}</p>}
+            <h2 className="text-[17px] font-semibold tracking-tight text-foreground">{title}</h2>
+            {description && <p className="mt-1 text-[13px] text-muted">{description}</p>}
           </div>
           <button
             onClick={onClose}
             aria-label="Cerrar"
-            className="rounded-full bg-black/[0.04] p-1.5 text-zinc-500 transition-colors duration-200 hover:bg-black/[0.08] hover:text-zinc-900"
+            className="rounded-lg bg-surface-raised p-1.5 text-muted transition-colors duration-200 hover:bg-surface-hover hover:text-foreground"
           >
             <X className="h-4 w-4" aria-hidden />
           </button>
         </div>
-        <div className="mt-4 text-zinc-700">{children}</div>
-        {footer && <div className="mt-6 flex justify-end gap-2">{footer}</div>}
+        <div className="mt-4 text-foreground">{children}</div>
+        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
       </div>
     </div>
   );

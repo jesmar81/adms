@@ -3,12 +3,56 @@
 @tailwind utilities;
 
 @layer base {
-  html {
+  :root {
+    color-scheme: dark;
+    --surface-canvas: 240 10% 3.9%;
+    --surface-sidebar: 240 9% 5%;
+    --surface-card: 240 8% 7%;
+    --surface-input: 240 6% 9%;
+    --surface-hover: 240 5% 12%;
+    --surface-raised: 240 6% 10%;
+    --foreground: 0 0% 98%;
+    --muted: 240 5% 65%;
+    --line-subtle: 240 4% 18%;
+    --line-soft: 240 4% 28%;
+    --accent: 217 91% 60%;
+    --accent-hover: 213 94% 68%;
+    --tone-success-surface: 160 84% 39% / 0.12;
+    --tone-success-ink: 160 84% 76%;
+    --tone-warning-surface: 38 92% 50% / 0.12;
+    --tone-warning-ink: 43 96% 72%;
+    --tone-danger-surface: 350 89% 60% / 0.12;
+    --tone-danger-ink: 350 96% 78%;
+  }
+
+  :root.theme-light {
     color-scheme: light;
+    --surface-canvas: 220 25% 97%;
+    --surface-sidebar: 0 0% 100%;
+    --surface-card: 0 0% 100%;
+    --surface-input: 0 0% 100%;
+    --surface-hover: 220 20% 95%;
+    --surface-raised: 220 20% 96%;
+    --foreground: 222 30% 13%;
+    --muted: 220 12% 42%;
+    --line-subtle: 220 14% 88%;
+    --line-soft: 220 14% 78%;
+    --accent: 217 91% 50%;
+    --accent-hover: 217 91% 43%;
+    --tone-success-surface: 160 84% 39% / 0.10;
+    --tone-success-ink: 160 84% 25%;
+    --tone-warning-surface: 38 92% 50% / 0.11;
+    --tone-warning-ink: 32 88% 28%;
+    --tone-danger-surface: 350 89% 60% / 0.10;
+    --tone-danger-ink: 350 72% 35%;
+  }
+
+  html {
+    color-scheme: dark;
   }
 
   body {
-    @apply bg-surface-canvas font-sans text-zinc-900 antialiased;
+    @apply bg-surface-canvas font-sans text-foreground antialiased;
     font-feature-settings:
       "ss01",
       "cv11";
@@ -16,11 +60,11 @@
   }
 
   ::selection {
-    background: rgba(0, 113, 227, 0.18);
+    background: rgba(59, 130, 246, 0.34);
   }
 
   :focus-visible {
-    outline: 2px solid rgba(0, 113, 227, 0.7);
+    outline: 2px solid rgba(96, 165, 250, 0.9);
     outline-offset: 2px;
     border-radius: 6px;
   }
@@ -30,14 +74,58 @@
     height: 10px;
   }
   ::-webkit-scrollbar-track {
-    background: transparent;
+    background: hsl(var(--surface-canvas));
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.16);
+    background: hsl(var(--line-soft));
     border-radius: 8px;
-    border: 2px solid #f5f5f7;
+    border: 2px solid hsl(var(--surface-canvas));
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.28);
+    background: hsl(var(--muted));
   }
+}
+
+@layer components {
+  .enterprise-page {
+    min-height: 100%;
+    background-image:
+      radial-gradient(circle at 76% -12%, rgba(59, 130, 246, 0.1), transparent 30rem),
+      radial-gradient(circle at 10% 100%, rgba(99, 102, 241, 0.055), transparent 28rem);
+  }
+
+  /* Puente de compatibilidad para las pantallas existentes durante el rediseño. */
+  .enterprise-page :is(.bg-white, .bg-white\/70, .bg-white\/80) { background-color: hsl(var(--surface-card)) !important; }
+  .enterprise-page :is(.bg-zinc-50, .bg-zinc-50\/50, .bg-zinc-50\/60, .bg-zinc-50\/70) { background-color: hsl(var(--surface-input)) !important; }
+  .enterprise-page .bg-zinc-100 { background-color: hsl(var(--surface-hover)) !important; }
+  .enterprise-page .bg-zinc-200 { background-color: hsl(var(--surface-hover)) !important; }
+  .enterprise-page .bg-black\/\[0\.04\], .enterprise-page .bg-black\/\[0\.02\] { background-color: hsl(var(--foreground) / 0.055) !important; }
+  .enterprise-page .bg-black\/\[0\.05\], .enterprise-page .bg-black\/\[0\.08\] { background-color: hsl(var(--foreground) / 0.09) !important; }
+  .enterprise-page .text-zinc-900, .enterprise-page .text-zinc-800, .enterprise-page .text-zinc-700 { color: hsl(var(--foreground)) !important; }
+  .enterprise-page .text-zinc-600 { color: hsl(var(--foreground) / 0.85) !important; }
+  .enterprise-page .text-zinc-500 { color: hsl(var(--muted)) !important; }
+  .enterprise-page .text-zinc-400 { color: hsl(var(--muted) / 0.82) !important; }
+  .enterprise-page .border-zinc-200, .enterprise-page .border-zinc-300 { border-color: hsl(var(--line-subtle)) !important; }
+  .enterprise-page .divide-zinc-100 > :not([hidden]) ~ :not([hidden]) { border-color: hsl(var(--line-subtle)) !important; }
+  .enterprise-page .bg-emerald-50 { background-color: hsl(var(--tone-success-surface)) !important; }
+  .enterprise-page :is(.text-emerald-700, .text-emerald-800, .text-emerald-900) { color: hsl(var(--tone-success-ink)) !important; }
+  .enterprise-page .bg-amber-50 { background-color: hsl(var(--tone-warning-surface)) !important; }
+  .enterprise-page :is(.text-amber-700, .text-amber-800, .text-amber-900) { color: hsl(var(--tone-warning-ink)) !important; }
+  .enterprise-page :is(.bg-red-50, .bg-rose-50) { background-color: hsl(var(--tone-danger-surface)) !important; }
+  .enterprise-page :is(.text-red-600, .text-red-700, .text-rose-600, .text-rose-700) { color: hsl(var(--tone-danger-ink)) !important; }
+  .enterprise-page .text-accent-600, .enterprise-page .text-accent-700, .enterprise-page .text-accent-800, .enterprise-page .text-accent-900 { color: hsl(var(--accent-hover)) !important; }
+  /* Las variantes -300/-400 se usan como texto sobre superficies oscuras.
+     En modo claro se vuelven tintas semánticas legibles, no colores pastel. */
+  :root.theme-light .enterprise-page .text-emerald-400 { color: hsl(var(--tone-success-ink)) !important; }
+  :root.theme-light .enterprise-page .text-amber-300,
+  :root.theme-light .enterprise-page .text-amber-400 { color: hsl(var(--tone-warning-ink)) !important; }
+  :root.theme-light .enterprise-page .text-rose-300,
+  :root.theme-light .enterprise-page .text-rose-400 { color: hsl(var(--tone-danger-ink)) !important; }
+  :root.theme-light .enterprise-page .text-sky-300,
+  :root.theme-light .enterprise-page .text-sky-400 { color: hsl(var(--accent-hover)) !important; }
+  :root.theme-light .enterprise-page .text-violet-300,
+  :root.theme-light .enterprise-page .text-violet-400 { color: hsl(252 72% 39%) !important; }
+  .enterprise-page input, .enterprise-page select, .enterprise-page textarea { color-scheme: dark; }
+  :root.theme-light .enterprise-page input, :root.theme-light .enterprise-page select, :root.theme-light .enterprise-page textarea { color-scheme: light; }
+  .enterprise-page button.h-10 { height: 2.25rem !important; }
 }

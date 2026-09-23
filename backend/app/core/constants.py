@@ -103,6 +103,10 @@ PERMISSIONS = (
     "enrollments.read",
     "enrollments.write",
     "enrollments.approve",
+    "overtime.read",
+    "overtime.request",
+    "overtime.review",
+    "overtime.approve",
 )
 
 DEFAULT_ROLES: dict[str, list[str]] = {
@@ -124,6 +128,7 @@ DEFAULT_ROLES: dict[str, list[str]] = {
         "employments.read",
         "schedules.read",
         "enrollments.read",
+        "overtime.read",
     ],
     "viewer": [
         "devices.read",
@@ -132,4 +137,21 @@ DEFAULT_ROLES: dict[str, list[str]] = {
         "device_users.read",
         "commands.read",
     ],
+    "hr": [
+        "attendance.read",
+        "attendance.write",
+        "attendance.export",
+        "companies.read",
+        "sites.read",
+        "people.read",
+        "people.write",
+        "employments.read",
+        "employments.write",
+        "schedules.read",
+        "schedules.write",
+        "overtime.read",
+        "overtime.request",
+        "overtime.review",
+    ],
+    "director": ["attendance.read", "companies.read", "overtime.read", "overtime.approve"],
 }

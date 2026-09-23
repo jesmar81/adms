@@ -2,6 +2,7 @@ import type {
   AdminUser,
   AbsenceReport,
   AttendanceAdjustment,
+  AttendanceDashboard,
   AttendanceRow,
   AuditEntry,
   Company,
@@ -23,6 +24,7 @@ import type {
   PersonAttendancePage,
   PersonSensitiveIdentifiers,
   PunctualityReport,
+  OvertimeRequest,
   ScheduleAssignment,
   Site,
   WeeklyCardReport,
@@ -227,12 +229,36 @@ class ApiClient {
     return this.get("/api/v1/reports/absences", params);
   }
 
+  attendanceDashboard(params: Record<string, string>): Promise<AttendanceDashboard> {
+    return this.get("/api/v1/reports/dashboard", params);
+  }
+
   weeklyCard(params: Record<string, string>): Promise<WeeklyCardReport> {
     return this.get("/api/v1/reports/weekly-card", params);
   }
 
   punctualityReport(params: Record<string, string>): Promise<PunctualityReport[]> {
     return this.get("/api/v1/reports/punctuality", params);
+  }
+
+  overtimeRequests(params: Record<string, string>): Promise<OvertimeRequest[]> {
+    return this.get("/api/v1/reports/overtime", params);
+  }
+
+  detectOvertime(params: Record<string, string>): Promise<OvertimeRequest[]> {
+    return this.request(`/api/v1/reports/overtime/detect?${new URLSearchParams(params).toString()}`, { method: "POST" });
+  }
+
+  createManualOvertime(body: Record<string, unknown>): Promise<OvertimeRequest> {
+    return this.request("/api/v1/reports/overtime/manual", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  reviewOvertime(id: string, body: Record<string, unknown>): Promise<OvertimeRequest> {
+    return this.request(`/api/v1/reports/overtime/${id}/review`, { method: "POST", body: JSON.stringify(body) });
+  }
+
+  authorizeOvertime(id: string, body: Record<string, unknown>): Promise<OvertimeRequest> {
+    return this.request(`/api/v1/reports/overtime/${id}/authorize`, { method: "POST", body: JSON.stringify(body) });
   }
 
   attendanceAdjustments(params: Record<string, string>): Promise<AttendanceAdjustment[]> {

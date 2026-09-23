@@ -543,6 +543,7 @@ class WeeklyCardDayOut(BaseModel):
     mark_count: int
     late_minutes: int = 0
     early_departure_minutes: int = 0
+    overtime_minutes: int = 0
     adjustment_id: uuid.UUID | None = None
     adjustment_reason: str | None = None
 
@@ -592,6 +593,67 @@ class PunctualityReportOut(BaseModel):
     expected_exit_at: datetime | None = None
     last_mark_at: datetime | None = None
     early_departure_minutes: int = 0
+
+
+class AttendanceDashboardOut(BaseModel):
+    """Operational KPIs for one company and one local attendance day."""
+
+    company_id: uuid.UUID
+    report_date: date
+    scheduled_workers: int = 0
+    present_workers: int = 0
+    on_time_workers: int = 0
+    late_workers: int = 0
+    late_minutes: int = 0
+    absent_workers: int = 0
+    justified_absences: int = 0
+    raw_marks: int = 0
+    unresolved_marks: int = 0
+    overtime_pending_hr: int = 0
+    overtime_pending_direction: int = 0
+    overtime_authorized_minutes: int = 0
+
+
+class OvertimeRequestOut(BaseModel):
+    person_id: uuid.UUID
+    employment_id: uuid.UUID
+    worker_name: str
+    employee_number: str
+    company_name: str
+    report_date: date
+    id: uuid.UUID
+    source: Literal["detected", "manual"]
+    status: Literal["pending_hr", "pending_direction", "approved", "rejected", "cancelled"]
+    scheduled_exit_at: datetime | None = None
+    detected_exit_at: datetime | None = None
+    minutes: int
+    reviewed_minutes: int | None = None
+    authorized_minutes: int | None = None
+    reason: str
+    review_note: str | None = None
+    authorization_note: str | None = None
+    created_at: datetime
+    reviewed_at: datetime | None = None
+    authorized_at: datetime | None = None
+
+
+class OvertimeManualIn(BaseModel):
+    employment_id: uuid.UUID
+    attendance_date: date
+    minutes: int = Field(ge=1, le=720)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+class OvertimeReviewIn(BaseModel):
+    decision: Literal["send_to_direction", "reject"]
+    reviewed_minutes: int | None = Field(default=None, ge=1, le=720)
+    note: str = Field(min_length=3, max_length=500)
+
+
+class OvertimeAuthorizationIn(BaseModel):
+    decision: Literal["approve", "reject"]
+    authorized_minutes: int | None = Field(default=None, ge=1, le=720)
+    note: str = Field(min_length=3, max_length=500)
 
 
 class PersonAttendancePageOut(BaseModel):

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <section
-      className={`rounded-2xl border border-line-subtle bg-surface-card shadow-card ${className}`}
+      className={`relative overflow-hidden rounded-[10px] border border-line-subtle bg-surface-card/85 shadow-card backdrop-blur-sm ${className}`}
     >
       {children}
     </section>
@@ -20,16 +20,16 @@ interface StatCardProps {
 
 export function StatCard({ label, value, sub, icon, iconTone = "bg-accent-soft text-accent" }: StatCardProps) {
   return (
-    <Card className="p-5 transition-colors duration-200 hover:border-line-soft">
+    <Card className="group p-4 transition-all duration-150 hover:-translate-y-px hover:border-line-soft hover:shadow-glow">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[13px] font-medium text-zinc-500">{label}</p>
-          <p className="mt-1.5 text-[28px] font-semibold leading-none tracking-tight text-zinc-900 tabular-nums">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.11em] text-muted">{label}</p>
+          <p className="mt-1.5 font-mono text-[26px] font-bold leading-none tracking-tight text-foreground tabular-nums">
             {value}
           </p>
-          {sub && <p className="mt-1.5 truncate text-xs text-zinc-400">{sub}</p>}
+          {sub && <p className="mt-1.5 truncate text-[11px] text-muted">{sub}</p>}
         </div>
-        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconTone}`}>
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/5 ${iconTone}`}>
           {icon}
         </span>
       </div>

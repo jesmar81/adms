@@ -5,7 +5,7 @@ import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTML
 import { useId } from "react";
 
 const CONTROL =
-  "w-full rounded-xl border border-line-soft bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm placeholder:text-zinc-400 transition-colors duration-200 hover:border-zinc-400/60 focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/15 disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-md border border-line-subtle bg-surface-input px-2.5 py-1.5 text-[13px] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.025)] placeholder:text-muted transition-colors duration-150 hover:border-line-soft focus:border-accent focus:outline-none focus:ring-3 focus:ring-accent/15 disabled:cursor-not-allowed disabled:opacity-50";
 
 interface FieldProps {
   label: string;
@@ -19,17 +19,17 @@ export function Field({ label, hint, error, children }: FieldProps) {
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-[13px] font-medium text-zinc-700">
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-[11px] font-medium tracking-[0.01em] text-foreground">
         {label}
       </label>
       {children(id)}
       {error ? (
-        <p id={errorId} role="alert" className="text-xs text-red-600">
+        <p id={errorId} role="alert" className="text-xs text-rose-400">
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className="text-xs text-zinc-500">
+        <p id={hintId} className="text-xs text-muted">
           {hint}
         </p>
       ) : null}
@@ -47,7 +47,7 @@ export function Input({ id, invalid, className = "", ...rest }: InputProps) {
     <input
       id={id}
       aria-invalid={invalid || undefined}
-      className={`${CONTROL} h-10 ${invalid ? "border-red-400" : ""} ${className}`}
+      className={`${CONTROL} h-9 ${invalid ? "border-red-400" : ""} ${className}`}
       {...rest}
     />
   );
@@ -60,12 +60,12 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
 export function Select({ id, children, className = "", ...rest }: SelectProps) {
   return (
     <span className="relative inline-flex w-full items-center">
-      <select id={id} className={`${CONTROL} h-10 appearance-none pr-9 ${className}`} {...rest}>
+      <select id={id} className={`${CONTROL} h-9 appearance-none pr-8 ${className}`} {...rest}>
         {children}
       </select>
       <ChevronDown
         aria-hidden
-        className="pointer-events-none absolute right-3 h-4 w-4 text-zinc-400"
+        className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-muted"
       />
     </span>
   );
@@ -76,7 +76,7 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 }
 
 export function Textarea({ id, className = "", ...rest }: TextareaProps) {
-  return <textarea id={id} className={`${CONTROL} min-h-[88px] resize-y ${className}`} {...rest} />;
+  return <textarea id={id} className={`${CONTROL} min-h-[80px] resize-y ${className}`} {...rest} />;
 }
 
 export function SearchInput({
@@ -86,7 +86,7 @@ export function SearchInput({
   return (
     <input
       role="searchbox"
-      className={`${CONTROL} h-10 ${className}`}
+      className={`${CONTROL} h-9 ${className}`}
       {...rest}
     />
   );

@@ -20,8 +20,8 @@ interface ToastApi {
 const ToastContext = createContext<ToastApi | null>(null);
 
 const ICONS: Record<ToastTone, ReactNode> = {
-  success: <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden />,
-  error: <XCircle className="h-4 w-4 text-red-600" aria-hidden />,
+  success: <CheckCircle2 className="h-4 w-4 text-emerald-400" aria-hidden />,
+  error: <XCircle className="h-4 w-4 text-rose-400" aria-hidden />,
   info: <Info className="h-4 w-4 text-accent" aria-hidden />,
 };
 
@@ -56,17 +56,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div
             key={t.id}
-            className="pointer-events-auto flex animate-rise-in items-start gap-3 rounded-xl border border-line-subtle bg-white p-3.5 shadow-pop"
+            className="pointer-events-auto flex animate-rise-in items-start gap-3 rounded-xl border border-line-soft bg-surface-card p-3.5 shadow-pop"
           >
             <span className="mt-0.5 shrink-0">{ICONS[t.tone]}</span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-zinc-900">{t.title}</p>
-              {t.message && <p className="mt-0.5 truncate text-[13px] text-zinc-500">{t.message}</p>}
+              <p className="text-sm font-medium text-foreground">{t.title}</p>
+              {t.message && <p className="mt-0.5 truncate text-[13px] text-muted">{t.message}</p>}
             </div>
             <button
               onClick={() => dismiss(t.id)}
               aria-label="Descartar notificación"
-              className="rounded-md p-1 text-zinc-400 transition-colors duration-150 hover:bg-black/[0.05] hover:text-zinc-700"
+              className="rounded-md p-1 text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-foreground"
             >
               <X className="h-3.5 w-3.5" aria-hidden />
             </button>
