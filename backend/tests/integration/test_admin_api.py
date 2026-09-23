@@ -161,6 +161,49 @@ async def test_device_users_create_delete(admin_client) -> None:  # type: ignore
     assert (await admin_client.delete(f"/api/v1/device-users/{user_id}")).status_code == 409
 
 
+async def test_worker_file_lists_linked_clock_pin(admin_client) -> None:  # type: ignore[no-untyped-def]
+    group = await admin_client.post(
+        "/api/v1/corporate-groups", json={"name": "PIN link group", "code": "pin-link"}
+    )
+    assert group.status_code == 201, group.text
+    person = await admin_client.post(
+        "/api/v1/people",
+        json={
+            "corporate_group_id": group.json()["id"],
+            "first_name": "María José",
+            "last_name": "García",
+            "second_last_name": "López",
+        },
+    )
+    assert person.status_code == 201, person.text
+    device_id = await _register_device(admin_client, "ADMPINLINK")
+    created = await admin_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={
+            "person_id": person.json()["id"],
+            "pin": "PIN-5201",
+            "name": "María José García López",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    linked = await admin_client.get(
+        f"/api/v1/device-users/by-person/{person.json()['id']}"
+    )
+    assert linked.status_code == 200, linked.text
+    assert linked.json() == [
+        {
+            "device_id": device_id,
+            "device_name": "D1",
+            "device_serial_number": "ADMPINLINK",
+            "pin": "PIN-5201",
+            "device_name_on_terminal": "María José García López",
+            "sync_state": "pending",
+            "last_synced_at": None,
+        }
+    ]
+
+
 async def test_users_and_audit_lists(admin_client) -> None:  # type: ignore[no-untyped-def]
     assert len((await admin_client.get("/api/v1/users")).json()) >= 1
     audit = await admin_client.get("/api/v1/audit")

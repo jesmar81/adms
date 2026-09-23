@@ -280,14 +280,14 @@ export default function CompaniesPage() {
           </div>
         </div>
       </Card>
-      <label className="mb-4 flex items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} /> Mostrar registros dados de baja</label>
+      <label className="mb-4 flex min-h-11 items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} /> Mostrar registros dados de baja</label>
       {loading ? <LoadingState rows={5} /> : companies.length === 0 ? <EmptyState icon={<Building2 className="h-5 w-5" />} title="Sin empresas" description="Crea la primera empresa legal del grupo." /> : <div className="space-y-4">{companies.map(renderCompany)}</div>}
       <Modal
         open={editTarget !== null}
         onClose={() => setEditTarget(null)}
         title={editTarget?.kind === "company" ? "Editar empresa" : "Editar sucursal"}
         footer={
-          <div className="flex gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button variant="ghost" onClick={() => setEditTarget(null)}>Cancelar</Button>
             <Button variant="primary" icon={<Pencil className="h-4 w-4" />} onClick={() => void saveEdit()} loading={saving}>Guardar</Button>
           </div>
@@ -312,7 +312,7 @@ export default function CompaniesPage() {
         title="Eliminación definitiva"
         description="Debe estar dado de baja y sin dependencias."
         footer={
-          <div className="flex gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button variant="ghost" onClick={() => { setHardTarget(null); setCaptcha(null); }}>Cancelar</Button>
             <Button variant="danger" icon={<ShieldAlert className="h-4 w-4" />} onClick={() => void hardDelete()} loading={saving} disabled={captchaAnswer.length !== 6}>Eliminar definitivamente</Button>
           </div>

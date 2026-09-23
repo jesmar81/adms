@@ -47,7 +47,7 @@ export function Input({ id, invalid, className = "", ...rest }: InputProps) {
     <input
       id={id}
       aria-invalid={invalid || undefined}
-      className={`${CONTROL} h-9 ${invalid ? "border-red-400" : ""} ${className}`}
+      className={`${CONTROL} h-11 sm:h-9 ${invalid ? "border-red-400" : ""} ${className}`}
       {...rest}
     />
   );
@@ -60,7 +60,7 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
 export function Select({ id, children, className = "", ...rest }: SelectProps) {
   return (
     <span className="relative inline-flex w-full items-center">
-      <select id={id} className={`${CONTROL} h-9 appearance-none pr-8 ${className}`} {...rest}>
+      <select id={id} className={`${CONTROL} h-11 appearance-none pr-8 sm:h-9 ${className}`} {...rest}>
         {children}
       </select>
       <ChevronDown
@@ -76,7 +76,7 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 }
 
 export function Textarea({ id, className = "", ...rest }: TextareaProps) {
-  return <textarea id={id} className={`${CONTROL} min-h-[80px] resize-y ${className}`} {...rest} />;
+  return <textarea id={id} className={`${CONTROL} min-h-24 resize-y ${className}`} {...rest} />;
 }
 
 export function SearchInput({
@@ -86,7 +86,7 @@ export function SearchInput({
   return (
     <input
       role="searchbox"
-      className={`${CONTROL} h-9 ${className}`}
+      className={`${CONTROL} h-11 sm:h-9 ${className}`}
       {...rest}
     />
   );

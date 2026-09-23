@@ -62,6 +62,7 @@ const NAV: NavSection[] = [
     title: "Asistencia",
     items: [
       { href: "/attendance", label: "Marcaciones", icon: <Clock className="h-[17px] w-[17px]" aria-hidden />, perm: "attendance.read" },
+      { href: "/attendance/pending", label: "Llegadas en vivo", icon: <Activity className="h-[17px] w-[17px]" aria-hidden />, perm: "attendance.read" },
       { href: "/reports", label: "Reportes", icon: <FileBarChart className="h-[17px] w-[17px]" aria-hidden />, perm: "attendance.read" },
       { href: "/reports?view=overtime", label: "Tiempo extra", icon: <TimerReset className="h-[17px] w-[17px]" aria-hidden />, perm: "attendance.read" },
       { href: "/device-users", label: "Personal en reloj", icon: <Users className="h-[17px] w-[17px]" aria-hidden />, perm: "device_users.read" },
@@ -81,10 +82,11 @@ const CRUMB_TITLES: Record<string, string> = {
   dashboard: "Centro de control", devices: "Relojes", commands: "Comandos", attendance: "Marcaciones",
   reports: "Reportes", "device-users": "Personal en reloj", companies: "Empresas y sucursales",
   people: "Trabajadores", "work-schedules": "Horarios", holidays: "Feriados", enrollments: "Enrolamientos",
-  users: "Usuarios y accesos", audit: "Auditoría",
+  users: "Usuarios y accesos", audit: "Auditoría", pending: "Llegadas en vivo",
 };
 
 function isActive(pathname: string, href: string): boolean {
+  if (href === "/attendance") return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -132,7 +134,7 @@ function NavList({ collapsed, onNavigate, can }: { collapsed: boolean; onNavigat
                       onClick={onNavigate}
                       aria-current={active ? "page" : undefined}
                       title={collapsed ? item.label : undefined}
-                      className={`group flex items-center gap-3 rounded-lg border px-2.5 py-2 text-[13px] transition-all duration-150 ${collapsed ? "justify-center" : ""} ${active ? "border-blue-400/20 bg-accent-soft font-medium text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.04)]" : "border-transparent text-muted hover:border-line-subtle hover:bg-surface-hover hover:text-foreground"}`}
+                      className={`group flex min-h-11 items-center gap-3 rounded-lg border px-2.5 py-3 text-[13px] transition-all duration-150 lg:min-h-0 lg:py-2 ${collapsed ? "justify-center" : ""} ${active ? "border-blue-400/20 bg-accent-soft font-medium text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.04)]" : "border-transparent text-muted hover:border-line-subtle hover:bg-surface-hover hover:text-foreground"}`}
                     >
                       <span className={active ? "text-accent" : "text-muted transition-colors group-hover:text-foreground"}>{item.icon}</span>
                       {!collapsed && <span className="truncate">{item.label}</span>}
@@ -195,11 +197,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {drawer && <div className="fixed inset-0 z-50 lg:hidden"><button aria-label="Cerrar menú" onClick={() => setDrawer(false)} className="absolute inset-0 animate-fade-in cursor-default bg-black/70 backdrop-blur-sm" /><aside aria-label="Navegación principal" className="absolute inset-y-0 left-0 flex w-[286px] animate-drawer-in flex-col border-r border-line-subtle bg-surface-sidebar shadow-pop"><div className="flex h-16 items-center justify-between border-b border-line-subtle pr-3"><Brand collapsed={false} /><button onClick={() => setDrawer(false)} aria-label="Cerrar menú" className="rounded-lg p-2 text-muted hover:bg-surface-hover hover:text-foreground"><X className="h-5 w-5" aria-hidden /></button></div><div className="min-h-0 flex-1 overflow-y-auto py-4"><NavList collapsed={false} can={can} onNavigate={() => setDrawer(false)} /></div></aside></div>}
+      {drawer && <div className="fixed inset-0 z-50 lg:hidden"><button aria-label="Cerrar menú" onClick={() => setDrawer(false)} className="absolute inset-0 animate-fade-in cursor-default bg-black/70 backdrop-blur-sm" /><aside aria-label="Navegación principal" className="absolute inset-y-0 left-0 flex w-[min(286px,calc(100vw-16px))] animate-drawer-in flex-col border-r border-line-subtle bg-surface-sidebar shadow-pop"><div className="flex h-16 items-center justify-between border-b border-line-subtle pr-3"><Brand collapsed={false} /><button onClick={() => setDrawer(false)} aria-label="Cerrar menú" className="flex h-11 w-11 items-center justify-center rounded-lg text-muted hover:bg-surface-hover hover:text-foreground"><X className="h-5 w-5" aria-hidden /></button></div><div className="min-h-0 flex-1 overflow-y-auto py-4"><NavList collapsed={false} can={can} onNavigate={() => setDrawer(false)} /></div></aside></div>}
 
       <div className={`flex min-h-screen min-w-0 flex-col transition-[padding] duration-200 ${collapsed ? "lg:pl-[72px]" : "lg:pl-[270px]"}`}>
         <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-line-subtle bg-surface-canvas/80 px-4 backdrop-blur-xl md:px-8">
-          <div className="flex min-w-0 items-center gap-3"><button onClick={() => setDrawer(true)} aria-label="Abrir menú" className="rounded-lg p-2 text-muted transition-colors hover:bg-surface-hover hover:text-foreground lg:hidden"><Menu className="h-5 w-5" aria-hidden /></button><div className="min-w-0 truncate"><Breadcrumb items={crumbsFor(pathname)} /></div></div>
+          <div className="flex min-w-0 items-center gap-3"><button onClick={() => setDrawer(true)} aria-label="Abrir menú" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover hover:text-foreground lg:hidden"><Menu className="h-5 w-5" aria-hidden /></button><div className="min-w-0 truncate"><Breadcrumb items={crumbsFor(pathname)} /></div></div>
           <div className="flex items-center gap-2"><ThemeToggle compact /><span className="hidden items-center gap-2 rounded-lg border border-line-subtle bg-surface-raised px-2.5 py-2 text-[11px] text-muted sm:inline-flex"><Activity className="h-3.5 w-3.5 text-emerald-400" aria-hidden />Operación segura</span><Dropdown label="Menú de usuario" trigger={<span className="flex items-center gap-2 rounded-lg border border-transparent py-1 pl-1 pr-2 transition-colors hover:border-line-subtle hover:bg-surface-raised"><span aria-hidden className="flex h-7 w-7 items-center justify-center rounded-md bg-accent-soft text-[12px] font-bold text-accent">{initial}</span><span className="hidden max-w-32 truncate text-[13px] font-medium text-foreground sm:block">{user?.username ?? ""}</span></span>} items={[{ label: "Cerrar sesión", icon: <LogOut className="h-4 w-4" aria-hidden />, danger: true, onSelect: () => void signOut() }]} /></div>
         </header>
         <main id="contenido" className="enterprise-page flex-1 px-4 py-5 md:px-8 md:py-6"><div className="mx-auto w-full max-w-[1600px]">{children}</div></main>

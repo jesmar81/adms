@@ -127,5 +127,8 @@
   :root.theme-light .enterprise-page .text-violet-400 { color: hsl(252 72% 39%) !important; }
   .enterprise-page input, .enterprise-page select, .enterprise-page textarea { color-scheme: dark; }
   :root.theme-light .enterprise-page input, :root.theme-light .enterprise-page select, :root.theme-light .enterprise-page textarea { color-scheme: light; }
-  .enterprise-page button.h-10 { height: 2.25rem !important; }
+  .enterprise-page button.h-10 { height: 2.75rem !important; }
+  @media (min-width: 640px) {
+    .enterprise-page button.h-10 { height: 2.25rem !important; }
+  }
 }

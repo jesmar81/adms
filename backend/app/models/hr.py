@@ -279,6 +279,7 @@ class WorkSchedule(Base, UUIDPKMixin, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    automatic_exit_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

@@ -1002,6 +1002,7 @@ def _schedule_out(row: WorkSchedule, slots: list[ScheduleSlot]) -> WorkScheduleO
         company_id=row.company_id,
         name=row.name,
         timezone=row.timezone,
+        automatic_exit_enabled=row.automatic_exit_enabled,
         version=row.version,
         active=row.active,
         slots=[ScheduleSlotOut.model_validate(slot) for slot in slots],
@@ -1069,6 +1070,7 @@ async def create_work_schedule(
         company_id=payload.company_id,
         name=payload.name,
         timezone=payload.timezone,
+        automatic_exit_enabled=payload.automatic_exit_enabled,
     )
     session.add(row)
     await session.flush()
@@ -1128,6 +1130,7 @@ async def update_work_schedule(
             company_id=row.company_id,
             name=payload.name,
             timezone=payload.timezone,
+            automatic_exit_enabled=payload.automatic_exit_enabled,
             version=(latest_version or 0) + 1,
         )
         session.add(replacement)
@@ -1143,6 +1146,7 @@ async def update_work_schedule(
         return _schedule_out(replacement, slots)
     row.name = payload.name
     row.timezone = payload.timezone
+    row.automatic_exit_enabled = payload.automatic_exit_enabled
     await session.execute(delete(ScheduleSlot).where(ScheduleSlot.work_schedule_id == row.id))
     slots = [ScheduleSlot(work_schedule_id=row.id, **slot.model_dump()) for slot in payload.slots]
     session.add_all(slots)

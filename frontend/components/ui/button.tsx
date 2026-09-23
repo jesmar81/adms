@@ -17,8 +17,9 @@ const VARIANTS: Record<Variant, string> = {
 };
 
 const SIZES: Record<Size, string> = {
-  sm: "h-8 px-2.5 text-[12px]",
-  md: "h-9 px-3.5 text-[13px]",
+  // Comfortable touch targets on phones; retain the compact enterprise rhythm on desktop.
+  sm: "h-11 px-3 text-[12px] sm:h-8 sm:px-2.5",
+  md: "h-11 px-4 text-[13px] sm:h-9 sm:px-3.5",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -43,7 +44,7 @@ export function Button({
     <button
       type={type}
       disabled={Boolean(disabled || loading)}
-      className={`inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-all duration-150 disabled:cursor-not-allowed ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
+      className={`inline-flex min-w-[44px] select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-all duration-150 disabled:cursor-not-allowed sm:min-w-0 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       {...rest}
     >
       {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : icon}

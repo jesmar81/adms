@@ -226,12 +226,15 @@ export default function Page() {
             data={rows}
             keyOf={(r) => r.id}
             renderCard={(r) => (
-              <div className="flex items-center justify-between gap-3">
-                <div>
+              <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
                   <p className="font-mono text-sm font-medium">PIN {r.device_user_pin}</p>
                   <p className="mt-0.5 text-[13px] text-zinc-500">{formatDateTime(r.recorded_at)}</p>
+                  </div>
+                  <span className="shrink-0 text-sm text-zinc-600">{r.attribution_status === "assigned" ? "Asignada" : r.attribution_status === "ambiguous" ? "Ambigua" : "Sin asignar"}</span>
                 </div>
-                <span className="text-sm text-zinc-600">{r.attribution_status === "assigned" ? "Asignada" : r.attribution_status === "ambiguous" ? "Ambigua" : "Sin asignar"}</span>
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-line-subtle pt-2 text-sm text-zinc-600"><span>{r.status} · {r.verify_mode}</span><Can permission="attendance.write"><Button size="sm" variant="secondary" icon={<Link2 className="h-4 w-4" />} onClick={() => openResolution(r)}>Resolver</Button></Can></div>
               </div>
             )}
             empty={

@@ -20,6 +20,8 @@ from app.api.v1.schemas import (
     AttendanceAdjustmentOut,
     AttendanceDashboardOut,
     DailyArrivalReportOut,
+    LivePunctualityReportOut,
+    LivePunctualityRowOut,
     OvertimeAuthorizationIn,
     OvertimeManualIn,
     OvertimeRequestOut,
@@ -302,6 +304,17 @@ def _day(
 ) -> WeeklyCardDayOut:
     expected = _bounds(employment, report_day, assignments, schedules, slots, holidays)
     entry, meal_out, meal_in, exit_at = _events(marks, adjustment)
+    assignment = _assignment(assignments, report_day)
+    schedule = schedules.get(assignment.work_schedule_id) if assignment else None
+    if (
+        entry is not None
+        and exit_at is None
+        and expected is not None
+        and expected[1] is not None
+        and schedule is not None
+        and schedule.automatic_exit_enabled
+    ):
+        exit_at = expected[1]
     kwargs: dict[str, Any] = {
         "report_date": report_day,
         "entry_at": entry,
@@ -604,6 +617,118 @@ async def daily_arrivals(
                 )
             )
     return sorted(result, key=lambda item: (item.first_mark_at, item.worker_name))
+
+
+@reports_router.get("/live-punctuality", response_model=LivePunctualityReportOut)
+async def live_punctuality(
+    company_id: uuid.UUID,
+    report_date: date,
+    user: User = Depends(deps.require_permission("attendance.read")),
+    session: AsyncSession = Depends(get_db),
+) -> LivePunctualityReportOut:
+    """Show only shifts whose entry time has already passed and current arrival issues.
+
+    A missing mark is not classified as an absence here. It remains a pending
+    arrival until HR closes the day. Late minutes are net of the schedule grace.
+    """
+    await access_svc.require_company(session, user, company_id)
+    generated_at = datetime.now(UTC)
+    workers, assignments, schedules, slots, holidays, marks, adjustments = await _data(
+        session,
+        report_date,
+        report_date,
+        company_id=company_id,
+        allowed_company_ids=await access_svc.company_ids(session, user),
+    )
+    locations = await _locations(session, workers)
+    rows: list[LivePunctualityRowOut] = []
+    scheduled_count = arrived_on_time_count = pending_count = pending_beyond_tolerance = 0
+    late_count = late_minutes_total = 0
+
+    for employment, person, company in workers:
+        expected = _bounds(
+            employment,
+            report_date,
+            assignments.get(employment.id, []),
+            schedules,
+            slots,
+            holidays,
+        )
+        if expected is None or expected[0] > generated_at:
+            continue
+        adjustment = adjustments.get((employment.id, report_date))
+        if adjustment and adjustment.absence_kind:
+            continue
+
+        scheduled_count += 1
+        local_marks = _local_marks(
+            marks.get(employment.id, []), report_date, expected[0].tzinfo or UTC
+        )
+        arrival_at, _, _, _ = _events(local_marks, adjustment)
+        elapsed_minutes = (
+            max(0, int((generated_at - expected[0]).total_seconds() // 60))
+            if arrival_at is None
+            else max(0, int((arrival_at - expected[0]).total_seconds() // 60))
+        )
+        tolerance = expected[2]
+        late_minutes = max(0, elapsed_minutes - tolerance)
+        site_name, _ = locations.get(employment.id, (None, None))
+        if arrival_at is None:
+            pending_count += 1
+            tolerance_remaining = max(0, tolerance - elapsed_minutes)
+            if tolerance_remaining == 0:
+                pending_beyond_tolerance += 1
+            rows.append(
+                LivePunctualityRowOut(
+                    employment_id=employment.id,
+                    person_id=person.id,
+                    worker_name=_worker_name(person),
+                    employee_number=employment.employee_number,
+                    company_name=company.legal_name,
+                    site_name=site_name,
+                    scheduled_entry_at=expected[0],
+                    arrival_at=None,
+                    status="not_arrived",
+                    minutes_after_start=elapsed_minutes,
+                    late_minutes=late_minutes,
+                    tolerance_remaining_minutes=tolerance_remaining,
+                )
+            )
+        elif late_minutes > 0:
+            late_count += 1
+            late_minutes_total += late_minutes
+            rows.append(
+                LivePunctualityRowOut(
+                    employment_id=employment.id,
+                    person_id=person.id,
+                    worker_name=_worker_name(person),
+                    employee_number=employment.employee_number,
+                    company_name=company.legal_name,
+                    site_name=site_name,
+                    scheduled_entry_at=expected[0],
+                    arrival_at=arrival_at,
+                    status="late",
+                    minutes_after_start=elapsed_minutes,
+                    late_minutes=late_minutes,
+                    tolerance_remaining_minutes=0,
+                )
+            )
+        else:
+            arrived_on_time_count += 1
+
+    rows.sort(key=lambda row: (row.scheduled_entry_at, row.status, row.worker_name))
+    return LivePunctualityReportOut(
+        company_id=company_id,
+        report_date=report_date,
+        generated_at=generated_at,
+        scheduled_count=scheduled_count,
+        arrived_on_time_count=arrived_on_time_count,
+        pending_arrival_count=pending_count,
+        pending_beyond_tolerance_count=pending_beyond_tolerance,
+        late_count=late_count,
+        late_minutes_total=late_minutes_total,
+        rows=rows,
+    )
 
 
 @reports_router.get("/absences", response_model=list[AbsenceReportOut])

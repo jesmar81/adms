@@ -35,7 +35,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
       onClick={toggle}
       aria-label={isLight ? "Activar tema oscuro" : "Activar tema claro"}
       title={isLight ? "Tema oscuro" : "Tema claro"}
-      className={`inline-flex items-center justify-center rounded-md border border-line-subtle bg-surface-raised text-muted transition-colors hover:border-line-soft hover:bg-surface-hover hover:text-foreground ${compact ? "h-8 w-8" : "h-8 gap-1.5 px-2.5 text-[12px] font-medium"}`}
+      className={`inline-flex items-center justify-center rounded-md border border-line-subtle bg-surface-raised text-muted transition-colors hover:border-line-soft hover:bg-surface-hover hover:text-foreground ${compact ? "h-11 w-11 sm:h-8 sm:w-8" : "h-11 gap-1.5 px-3 text-[12px] font-medium sm:h-8 sm:px-2.5"}`}
     >
       {isLight ? <Moon className="h-4 w-4" aria-hidden /> : <Sun className="h-4 w-4" aria-hidden />}
       {!compact && <span>{isLight ? "Oscuro" : "Claro"}</span>}

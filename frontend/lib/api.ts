@@ -16,10 +16,12 @@ import type {
   Employment,
   EmploymentCompensation,
   EnrollmentRequest,
+  LivePunctualityReport,
   Holiday,
   HardDeleteCaptcha,
   Me,
   Person,
+  PersonDeviceUserLink,
   PersonPhoto,
   PersonAttendancePage,
   PersonSensitiveIdentifiers,
@@ -223,6 +225,10 @@ class ApiClient {
 
   dailyArrivals(params: Record<string, string>): Promise<DailyArrivalReport[]> {
     return this.get("/api/v1/reports/daily-arrivals", params);
+  }
+
+  livePunctuality(params: Record<string, string>): Promise<LivePunctualityReport> {
+    return this.get("/api/v1/reports/live-punctuality", params);
   }
 
   absencesReport(params: Record<string, string>): Promise<AbsenceReport[]> {
@@ -460,6 +466,10 @@ class ApiClient {
     return this.request(
       `/api/v1/device-users${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""}`,
     );
+  }
+
+  personDeviceUsers(personId: string): Promise<PersonDeviceUserLink[]> {
+    return this.request(`/api/v1/device-users/by-person/${personId}`);
   }
 
   createDeviceUser(deviceId: string, body: Record<string, unknown>): Promise<DeviceUser> {

@@ -113,7 +113,7 @@ export default function HolidaysPage() {
           <Field label="Tipo">{(id) => <Select id={id} value={kind} onChange={(event) => setKind(event.target.value as "company" | "electoral")} disabled={!companyId}><option value="company">Día interno</option><option value="electoral">Jornada electoral</option></Select>}</Field>
           <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void create()} loading={saving} disabled={!companyId || !holidayDate || !name.trim()}>Agregar</Button>
         </div>
-        <label className="mt-3 flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" checked={paidRest} onChange={(event) => setPaidRest(event.target.checked)} className="h-4 w-4 rounded border-line-soft text-accent-600 focus:ring-accent-500" />Es día de descanso pagado</label>
+        <label className="mt-3 flex min-h-11 items-center gap-2 text-sm text-zinc-700"><input type="checkbox" checked={paidRest} onChange={(event) => setPaidRest(event.target.checked)} className="h-4 w-4 shrink-0 rounded border-line-soft text-accent-600 focus:ring-accent-500" />Es día de descanso pagado</label>
       </Card>
       {loading ? <LoadingState rows={6} /> : <DataTable ariaLabel="Feriados de la empresa" columns={COLUMNS} data={holidays} keyOf={(row) => row.id} renderCard={(row) => <div><p className="font-medium">{row.holiday_date} · {row.name}</p><p className="mt-1 text-xs text-zinc-500">{KIND_LABEL[row.kind]} · {row.is_paid_rest ? "Descanso pagado" : "No pagado"}</p></div>} empty={<EmptyState icon={<CalendarPlus className="h-5 w-5" />} title="Sin feriados en este año" description="Genera primero los días legales o registra un día interno de la empresa." />} />}
     </>

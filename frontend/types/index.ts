@@ -53,6 +53,34 @@ export interface DailyArrivalReport {
   mark_count: number;
 }
 
+export interface LivePunctualityRow {
+  employment_id: string;
+  person_id: string;
+  worker_name: string;
+  employee_number: string;
+  company_name: string;
+  site_name: string | null;
+  scheduled_entry_at: string;
+  arrival_at: string | null;
+  status: "not_arrived" | "late";
+  minutes_after_start: number;
+  late_minutes: number;
+  tolerance_remaining_minutes: number;
+}
+
+export interface LivePunctualityReport {
+  company_id: string;
+  report_date: string;
+  generated_at: string;
+  scheduled_count: number;
+  arrived_on_time_count: number;
+  pending_arrival_count: number;
+  pending_beyond_tolerance_count: number;
+  late_count: number;
+  late_minutes_total: number;
+  rows: LivePunctualityRow[];
+}
+
 export interface AbsenceReport {
   person_id: string;
   employment_id: string;
@@ -176,6 +204,17 @@ export interface DeviceUser {
   enabled: boolean;
   sync_state: string;
   last_protocol_command_id: number | null;
+  last_synced_at: string | null;
+}
+
+export interface PersonDeviceUserLink {
+  device_id: string;
+  device_name: string | null;
+  device_serial_number: string;
+  pin: string;
+  device_name_on_terminal: string;
+  sync_state: string;
+  last_synced_at: string | null;
 }
 
 export interface CorporateGroup {
@@ -318,6 +357,7 @@ export interface WorkSchedule {
   company_id: string;
   name: string;
   timezone: string;
+  automatic_exit_enabled: boolean;
   version: number;
   active: boolean;
   slots: ScheduleSlot[];

@@ -44,7 +44,7 @@ export function Dropdown({ trigger, label, items, align = "right" }: DropdownPro
         aria-expanded={open}
         aria-label={label}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-lg transition-colors duration-200 hover:bg-surface-hover"
+        className="flex min-h-11 items-center gap-2 rounded-lg transition-colors duration-200 hover:bg-surface-hover sm:min-h-0"
       >
         {trigger}
       </button>
@@ -64,7 +64,7 @@ export function Dropdown({ trigger, label, items, align = "right" }: DropdownPro
                 setOpen(false);
                 item.onSelect();
               }}
-              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors duration-150 hover:bg-surface-hover ${
+              className={`flex min-h-11 w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors duration-150 hover:bg-surface-hover sm:min-h-0 sm:py-1.5 ${
                 item.danger ? "text-rose-300" : "text-foreground"
               }`}
             >

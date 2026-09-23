@@ -219,12 +219,12 @@ export default function Page() {
             </Field>
             <div className="sm:col-span-2 xl:col-span-4">
               <p className="text-[13px] font-medium text-zinc-700">Grupos completos</p>
-              <div className="mt-2 flex flex-wrap gap-2">{delegableGroups.map((group) => <label key={group.id} className="flex cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 py-2 text-sm"><input type="checkbox" checked={groupIds.includes(group.id)} onChange={(event) => setGroupIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} />{group.name}</label>)}</div>
+              <div className="mt-2 flex flex-wrap gap-2">{delegableGroups.map((group) => <label key={group.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 text-sm sm:py-2"><input type="checkbox" checked={groupIds.includes(group.id)} onChange={(event) => setGroupIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} />{group.name}</label>)}</div>
             </div>
             <div className="sm:col-span-2 xl:col-span-4">
               <p className="text-[13px] font-medium text-zinc-700">Empresas específicas</p>
               <p className="mt-0.5 text-xs text-zinc-500">Úsalo para limitar a una empresa sin conceder todo su grupo.</p>
-              <div className="mt-2 flex flex-wrap gap-2">{companies.filter((company) => !groupIds.includes(company.corporate_group_id)).map((company) => <label key={company.id} className="flex cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 py-2 text-sm"><input type="checkbox" checked={companyIds.includes(company.id)} onChange={(event) => setCompanyIds((current) => event.target.checked ? [...current, company.id] : current.filter((id) => id !== company.id))} />{company.legal_name}</label>)}</div>
+              <div className="mt-2 flex flex-wrap gap-2">{companies.filter((company) => !groupIds.includes(company.corporate_group_id)).map((company) => <label key={company.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 text-sm sm:py-2"><input type="checkbox" checked={companyIds.includes(company.id)} onChange={(event) => setCompanyIds((current) => event.target.checked ? [...current, company.id] : current.filter((id) => id !== company.id))} />{company.legal_name}</label>)}</div>
             </div>
             <div className="flex items-end xl:col-span-4">
               <Button variant="primary" onClick={() => void create()} loading={creating}>
@@ -312,12 +312,12 @@ export default function Page() {
           <Field label="Rol">{(id) => <Select id={id} value={editRoleName} onChange={(event) => setEditRoleName(event.target.value)}><option value="viewer">Consulta</option><option value="operator">Operación</option>{currentUser?.is_superuser ? <><option value="hr">Recursos humanos</option><option value="director">Dirección</option><option value="admin">Administración</option></> : null}</Select>}</Field>
           <div>
             <p className="text-[13px] font-medium text-zinc-700">Grupos completos</p>
-            <div className="mt-2 flex flex-wrap gap-2">{delegableGroups.map((group) => <label key={group.id} className="flex cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 py-2 text-sm"><input type="checkbox" checked={editGroupIds.includes(group.id)} onChange={(event) => setEditGroupIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} />{group.name}</label>)}</div>
+            <div className="mt-2 flex flex-wrap gap-2">{delegableGroups.map((group) => <label key={group.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 text-sm sm:py-2"><input type="checkbox" checked={editGroupIds.includes(group.id)} onChange={(event) => setEditGroupIds((current) => event.target.checked ? [...current, group.id] : current.filter((id) => id !== group.id))} />{group.name}</label>)}</div>
           </div>
           <div>
             <p className="text-[13px] font-medium text-zinc-700">Empresas específicas</p>
             <p className="mt-0.5 text-xs text-zinc-500">Otorga acceso sólo a la empresa elegida, sin extenderlo a sus empresas hermanas.</p>
-            <div className="mt-2 flex flex-wrap gap-2">{companies.filter((company) => !editGroupIds.includes(company.corporate_group_id)).map((company) => <label key={company.id} className="flex cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 py-2 text-sm"><input type="checkbox" checked={editCompanyIds.includes(company.id)} onChange={(event) => setEditCompanyIds((current) => event.target.checked ? [...current, company.id] : current.filter((id) => id !== company.id))} />{company.legal_name}</label>)}</div>
+            <div className="mt-2 flex flex-wrap gap-2">{companies.filter((company) => !editGroupIds.includes(company.corporate_group_id)).map((company) => <label key={company.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-line-soft px-3 text-sm sm:py-2"><input type="checkbox" checked={editCompanyIds.includes(company.id)} onChange={(event) => setEditCompanyIds((current) => event.target.checked ? [...current, company.id] : current.filter((id) => id !== company.id))} />{company.legal_name}</label>)}</div>
           </div>
         </div>
       </Modal>

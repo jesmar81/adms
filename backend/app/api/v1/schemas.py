@@ -364,12 +364,14 @@ class WorkScheduleIn(BaseModel):
     company_id: uuid.UUID
     name: str = Field(min_length=1, max_length=150)
     timezone: str = Field(default="America/Mexico_City", max_length=64)
+    automatic_exit_enabled: bool = False
     slots: list[ScheduleSlotIn] = Field(default_factory=list, max_length=100)
 
 
 class WorkSchedulePatch(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     timezone: str = Field(default="America/Mexico_City", max_length=64)
+    automatic_exit_enabled: bool = False
     slots: list[ScheduleSlotIn] = Field(min_length=1, max_length=100)
 
 
@@ -385,6 +387,7 @@ class WorkScheduleOut(BaseModel):
     company_id: uuid.UUID
     name: str
     timezone: str
+    automatic_exit_enabled: bool = False
     version: int
     active: bool
     slots: list[ScheduleSlotOut] = Field(default_factory=list)
@@ -521,6 +524,34 @@ class DailyArrivalReportOut(BaseModel):
     report_date: date
     first_mark_at: datetime
     mark_count: int
+
+
+class LivePunctualityRowOut(BaseModel):
+    employment_id: uuid.UUID
+    person_id: uuid.UUID
+    worker_name: str
+    employee_number: str
+    company_name: str
+    site_name: str | None = None
+    scheduled_entry_at: datetime
+    arrival_at: datetime | None = None
+    status: Literal["not_arrived", "late"]
+    minutes_after_start: int = 0
+    late_minutes: int = 0
+    tolerance_remaining_minutes: int = 0
+
+
+class LivePunctualityReportOut(BaseModel):
+    company_id: uuid.UUID
+    report_date: date
+    generated_at: datetime
+    scheduled_count: int
+    arrived_on_time_count: int
+    pending_arrival_count: int
+    pending_beyond_tolerance_count: int
+    late_count: int
+    late_minutes_total: int
+    rows: list[LivePunctualityRowOut]
 
 
 class AbsenceReportOut(BaseModel):
@@ -690,8 +721,21 @@ class DeviceUserOut(BaseModel):
     enabled: bool
     sync_state: str = "synced"
     last_protocol_command_id: int | None = None
+    last_synced_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class PersonDeviceUserLinkOut(BaseModel):
+    """A worker's PIN on one authorized terminal, for their HR file."""
+
+    device_id: uuid.UUID
+    device_name: str | None = None
+    device_serial_number: str
+    pin: str
+    device_name_on_terminal: str
+    sync_state: str
+    last_synced_at: datetime | None = None
 
 
 class CommandIn(BaseModel):

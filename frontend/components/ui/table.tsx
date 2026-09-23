@@ -91,14 +91,14 @@ export function Pagination({
         <button
           disabled={offset === 0}
           onClick={() => onPage(Math.max(0, offset - limit))}
-          className="rounded-lg border border-line-subtle bg-surface-raised px-4 py-1.5 text-foreground shadow-sm transition-colors duration-200 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+          className="min-h-11 rounded-lg border border-line-subtle bg-surface-raised px-4 py-1.5 text-foreground shadow-sm transition-colors duration-200 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
         >
           Anterior
         </button>
         <button
           disabled={!hasMore}
           onClick={() => onPage(offset + limit)}
-          className="rounded-lg border border-line-subtle bg-surface-raised px-4 py-1.5 text-foreground shadow-sm transition-colors duration-200 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+          className="min-h-11 rounded-lg border border-line-subtle bg-surface-raised px-4 py-1.5 text-foreground shadow-sm transition-colors duration-200 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
         >
           Siguiente
         </button>

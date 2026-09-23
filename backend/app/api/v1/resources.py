@@ -19,6 +19,7 @@ from app.api.v1.schemas import (
     DeviceUserIn,
     DeviceUserOut,
     DeviceUserUpdate,
+    PersonDeviceUserLinkOut,
 )
 from app.core.database import get_db
 from app.models.device import AttendanceAttribution, AttendanceLog, Device, DeviceUser
@@ -196,8 +197,41 @@ async def list_device_users(
             enabled=r.enabled,
             sync_state=r.sync_state,
             last_protocol_command_id=r.last_protocol_command_id,
+            last_synced_at=r.last_synced_at,
         )
         for r in result.scalars().all()
+    ]
+
+
+@device_users_router.get("/by-person/{person_id}", response_model=list[PersonDeviceUserLinkOut])
+async def list_person_device_users(
+    person_id: uuid.UUID,
+    user: User = Depends(deps.require_permission("device_users.read")),
+    session: AsyncSession = Depends(get_db),
+) -> list[PersonDeviceUserLinkOut]:
+    """List a worker's linked terminal PINs, limited to the caller's devices."""
+    await access_svc.require_person(session, user, person_id)
+    allowed_device_ids = await access_svc.device_ids(session, user)
+    result = await session.execute(
+        select(DeviceUser, Device)
+        .join(Device, Device.id == DeviceUser.device_id)
+        .where(
+            DeviceUser.person_id == person_id,
+            DeviceUser.device_id.in_(allowed_device_ids),
+        )
+        .order_by(Device.name, Device.serial_number, DeviceUser.pin)
+    )
+    return [
+        PersonDeviceUserLinkOut(
+            device_id=device.id,
+            device_name=device.name,
+            device_serial_number=device.serial_number,
+            pin=device_user.pin,
+            device_name_on_terminal=device_user.name,
+            sync_state=device_user.sync_state,
+            last_synced_at=device_user.last_synced_at,
+        )
+        for device_user, device in result.all()
     ]
 
 
@@ -213,6 +247,7 @@ def _user_out(row: DeviceUser) -> DeviceUserOut:
         enabled=row.enabled,
         sync_state=row.sync_state,
         last_protocol_command_id=row.last_protocol_command_id,
+        last_synced_at=row.last_synced_at,
     )
 
 

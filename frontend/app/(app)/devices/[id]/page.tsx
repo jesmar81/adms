@@ -322,13 +322,13 @@ function DetailInner({ id }: { id: string }) {
         </Card>
       </Can>
 
-      <div className="mb-4 mt-6 flex gap-1 rounded-xl border border-line-subtle bg-surface-card p-1">
+      <div className="mb-4 mt-6 grid grid-cols-2 gap-1 rounded-xl border border-line-subtle bg-surface-card p-1 sm:flex">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             aria-pressed={tab === t.id}
-            className={`flex-1 rounded-lg px-3 py-2 text-sm transition-colors duration-200 ${
+            className={`min-h-11 rounded-lg px-3 text-sm transition-colors duration-200 sm:min-h-0 sm:flex-1 sm:py-2 ${
               tab === t.id
                 ? "bg-black/[0.06] font-medium text-zinc-900"
                 : "text-zinc-500 hover:bg-black/[0.03] hover:text-zinc-900"
