@@ -281,6 +281,22 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
             },
         )
     ).json()
+    second_employment = (
+        await life_client.post(
+            f"/api/v1/people/{person['id']}/employments",
+            json={
+                "company_id": company["id"],
+                "employee_number": "A-02",
+                "started_on": "2026-01-01",
+            },
+        )
+    ).json()
+    first_assignment = await life_client.put(
+        f"/api/v1/employments/{second_employment['id']}/schedule-assignments/current",
+        json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-01"},
+    )
+    assert first_assignment.status_code == 200
+    assert first_assignment.json()["work_schedule_id"] == schedule["id"]
     assignment = await life_client.post(
         f"/api/v1/employments/{employment['id']}/schedule-assignments",
         json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-01"},

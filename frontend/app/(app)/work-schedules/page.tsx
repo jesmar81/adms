@@ -11,7 +11,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { DataTable } from "@/components/ui/table";
 import type { Column } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { Company, WorkSchedule } from "@/types";
 
 const DAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
@@ -109,10 +109,17 @@ export default function WorkSchedulesPage() {
     setIncludeMeal(true);
   }
 
+  function changeCompany(id: string) {
+    resetForm();
+    setError(null);
+    setCompanyId(id);
+  }
+
   async function save() {
     if (!companyId || !name.trim() || saving || daysOff.length < 1 || daysOff.length > 2) return;
     const payload = { name: name.trim(), timezone: "America/Mexico_City", automatic_exit_enabled: automaticExit, slots: slotsPayload() };
     setSaving(true);
+    setError(null);
     try {
       if (editing) {
         const updated = await api.updateWorkSchedule(editing.id, payload);
@@ -124,6 +131,10 @@ export default function WorkSchedulesPage() {
       resetForm();
       await load();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 404 && editing) {
+        resetForm();
+        await load();
+      }
       setError(err);
     } finally {
       setSaving(false);
@@ -136,6 +147,7 @@ export default function WorkSchedulesPage() {
     try {
       await api.deleteWorkSchedule(pendingDelete.id);
       notify("Horario eliminado", { tone: "success" });
+      if (editing?.id === pendingDelete.id) resetForm();
       setPendingDelete(null);
       await load();
     } catch (err) {
@@ -162,7 +174,7 @@ export default function WorkSchedulesPage() {
       <Card className="mb-5 p-5">
         <div className="flex flex-col gap-4">
           <div className="grid gap-3 lg:grid-cols-[16rem_minmax(0,1fr)]">
-            <Field label="Empresa">{(id) => <Select id={id} value={companyId} onChange={(event) => setCompanyId(event.target.value)} disabled={!companies.length}><option value="">Selecciona una empresa</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.legal_name}</option>)}</Select>}</Field>
+            <Field label="Empresa">{(id) => <Select id={id} value={companyId} onChange={(event) => changeCompany(event.target.value)} disabled={!companies.length}><option value="">Selecciona una empresa</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.legal_name}</option>)}</Select>}</Field>
             <Field label="Nombre del horario">{(id) => <Input id={id} value={name} onChange={(event) => setName(event.target.value)} placeholder="Operación martes a domingo" disabled={!companyId} />}</Field>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -185,7 +197,7 @@ export default function WorkSchedulesPage() {
               <label className="flex min-h-11 items-center gap-2 text-sm text-zinc-700"><input type="checkbox" checked={automaticExit} onChange={(event) => setAutomaticExit(event.target.checked)} className="h-4 w-4 shrink-0 rounded border-line-soft text-accent-600 focus:ring-accent-500" />Generar salida automática al finalizar turno</label>
             </div>
             <p className="mt-2 text-xs text-zinc-500">La salida automática sólo cierra la jornada a la hora programada. Una checada real posterior se conserva como evidencia y se envía a Tiempo extra para revisión.</p>
-            <Button variant="primary" icon={editing ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />} className="w-10 !px-0" aria-label={editing ? "Guardar horario" : "Crear horario"} title={editing ? "Guardar horario" : "Crear horario"} onClick={() => void save()} loading={saving} disabled={!companyId || !name.trim() || daysOff.length < 1} />
+            <Button variant="primary" icon={editing ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />} onClick={() => void save()} loading={saving} disabled={!companyId || !name.trim() || daysOff.length < 1}>{editing ? "Guardar cambios" : "Crear horario"}</Button>
           </div>
         </div>
       </Card>
