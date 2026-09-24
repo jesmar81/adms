@@ -68,3 +68,9 @@ suite también usa PostgreSQL y Redis reales.
 
 No uses `create_all` como reemplazo de migraciones en pruebas. Los servicios y
 la API trabajan sobre el esquema producido por Alembic.
+
+## Preparación E2E del navegador
+
+La estrategia pendiente para recorrer la UI, cubrir el enrolamiento y aislar
+los datos está en [`E2E_TEST_PREPARATION.md`](E2E_TEST_PREPARATION.md). La suite
+de navegador todavía no está configurada.

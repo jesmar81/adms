@@ -17,6 +17,7 @@ from redis.exceptions import RedisError
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql import Select
 
 from app.api.v1 import deps
 from app.api.v1.schemas import (
@@ -31,6 +32,7 @@ from app.api.v1.schemas import (
     EmploymentCompensationOut,
     EmploymentIn,
     EmploymentOut,
+    EnrollmentCandidateOut,
     EnrollmentRequestIn,
     EnrollmentRequestOut,
     EnrollmentRequestStatusIn,
@@ -1365,10 +1367,41 @@ async def list_schedule_assignments(
 enrollments_router = APIRouter(prefix="/enrollment-requests", tags=["enrollment-requests"])
 
 
-def _enrollment_out(row: EnrollmentRequest) -> EnrollmentRequestOut:
+def _worker_name(person: Person) -> str:
+    return " ".join(
+        part for part in (person.first_name, person.last_name, person.second_last_name) if part
+    )
+
+
+def _employment_is_current(employment: Employment, company: Company) -> bool:
+    try:
+        timezone = ZoneInfo(company.timezone)
+    except ZoneInfoNotFoundError:
+        timezone = ZoneInfo("UTC")
+    today = datetime.now(timezone).date()
+    return (
+        employment.active
+        and employment.started_on <= today
+        and (employment.ended_on is None or employment.ended_on >= today)
+    )
+
+
+def _enrollment_out(
+    row: EnrollmentRequest,
+    employment: Employment,
+    person: Person,
+    company: Company,
+    site: Site | None,
+) -> EnrollmentRequestOut:
     return EnrollmentRequestOut(
         id=row.id,
+        person_id=person.id,
+        worker_name=_worker_name(person),
         employment_id=row.employment_id,
+        employee_number=employment.employee_number,
+        company_name=company.trade_name or company.legal_name,
+        site_name=site.name if site else None,
+        position=employment.position,
         device_id=row.device_id,
         methods=list((row.methods or {}).get("requested", [])),
         fingerprint_positions=list((row.methods or {}).get("fingerprint_positions", [])),
@@ -1386,6 +1419,55 @@ def _enrollment_out(row: EnrollmentRequest) -> EnrollmentRequestOut:
     )
 
 
+def _enrollment_context_query() -> Select[tuple[Employment, Person, Company, Site]]:
+    return (
+        select(Employment, Person, Company, Site)
+        .join(Person, Employment.person_id == Person.id)
+        .join(Company, Employment.company_id == Company.id)
+        .outerjoin(Site, Employment.site_id == Site.id)
+    )
+
+
+@enrollments_router.get("/eligible-workers", response_model=list[EnrollmentCandidateOut])
+async def list_enrollment_candidates(
+    device_id: uuid.UUID,
+    user: User = Depends(deps.require_permission("enrollments.write")),
+    session: AsyncSession = Depends(get_db),
+) -> list[EnrollmentCandidateOut]:
+    device = await access_svc.require_device(session, user, device_id)
+    allowed_company_ids = await access_svc.company_ids(session, user)
+    query = _enrollment_context_query().where(
+        Employment.company_id.in_(allowed_company_ids),
+        Employment.active.is_(True),
+        Person.active.is_(True),
+    )
+    if device.site_id is not None:
+        device_site = await session.get(Site, device.site_id)
+        if device_site is None:
+            raise HTTPException(status_code=404, detail="Device site not found")
+        await access_svc.require_company(session, user, device_site.company_id)
+        query = query.where(Employment.company_id == device_site.company_id)
+
+    rows = (await session.execute(query.order_by(Person.last_name, Person.first_name))).tuples()
+    candidates: list[EnrollmentCandidateOut] = []
+    for employment, person, company, site in rows:
+        if not _employment_is_current(employment, company):
+            continue
+        candidates.append(
+            EnrollmentCandidateOut(
+                person_id=person.id,
+                worker_name=_worker_name(person),
+                employment_id=employment.id,
+                employee_number=employment.employee_number,
+                company_id=company.id,
+                company_name=company.trade_name or company.legal_name,
+                site_name=site.name if site else None,
+                position=employment.position,
+            )
+        )
+    return candidates
+
+
 @enrollments_router.get("", response_model=list[EnrollmentRequestOut])
 async def list_enrollment_requests(
     employment_id: uuid.UUID | None = None,
@@ -1394,8 +1476,11 @@ async def list_enrollment_requests(
     session: AsyncSession = Depends(get_db),
 ) -> list[EnrollmentRequestOut]:
     query = (
-        select(EnrollmentRequest)
+        select(EnrollmentRequest, Employment, Person, Company, Site)
         .join(Employment, EnrollmentRequest.employment_id == Employment.id)
+        .join(Person, Employment.person_id == Person.id)
+        .join(Company, Employment.company_id == Company.id)
+        .outerjoin(Site, Employment.site_id == Site.id)
         .where(Employment.company_id.in_(await access_svc.company_ids(session, user)))
         .order_by(EnrollmentRequest.created_at.desc())
         .limit(200)
@@ -1406,7 +1491,11 @@ async def list_enrollment_requests(
     if device_id:
         await access_svc.require_device(session, user, device_id)
         query = query.where(EnrollmentRequest.device_id == device_id)
-    return [_enrollment_out(row) for row in (await session.execute(query)).scalars()]
+    rows = (await session.execute(query)).tuples()
+    return [
+        _enrollment_out(request, employment, person, company, site)
+        for request, employment, person, company, site in rows
+    ]
 
 
 @enrollments_router.post("", response_model=EnrollmentRequestOut, status_code=201)
@@ -1416,12 +1505,63 @@ async def create_enrollment_request(
     session: AsyncSession = Depends(get_db),
     rid: str = Depends(deps.request_id),
 ) -> EnrollmentRequestOut:
-    employment = await access_svc.require_employment(session, user, payload.employment_id)
     device = await access_svc.require_device(session, user, payload.device_id)
-    if device.site_id is not None:
-        site = await session.get(Site, device.site_id)
-        if site is not None and site.company_id != employment.company_id:
-            raise HTTPException(status_code=422, detail="Device belongs to another company")
+    if payload.person_id is None and payload.employment_id is None:
+        raise HTTPException(status_code=422, detail="Select a worker to enroll")
+
+    device_site = await session.get(Site, device.site_id) if device.site_id else None
+    if device.site_id is not None and device_site is None:
+        raise HTTPException(status_code=404, detail="Device site not found")
+
+    if payload.employment_id is not None:
+        employment = await access_svc.require_employment(session, user, payload.employment_id)
+        context = await session.execute(
+            _enrollment_context_query().where(Employment.id == employment.id)
+        )
+        context_row = context.tuples().one_or_none()
+        if context_row is None:
+            raise HTTPException(status_code=404, detail="Worker not found")
+        employment, person, company, employment_site = context_row
+        if payload.person_id is not None and payload.person_id != person.id:
+            raise HTTPException(status_code=422, detail="Worker and employment do not match")
+    else:
+        if payload.person_id is None:
+            raise HTTPException(status_code=422, detail="Select a worker to enroll")
+        person = await access_svc.require_person(session, user, payload.person_id)
+        query = _enrollment_context_query().where(
+            Employment.person_id == person.id,
+            Employment.company_id.in_(await access_svc.company_ids(session, user)),
+            Employment.active.is_(True),
+        )
+        if device_site is not None:
+            query = query.where(Employment.company_id == device_site.company_id)
+        possible_contexts = (await session.execute(query)).tuples()
+        current_contexts = [
+            context
+            for context in possible_contexts
+            if _employment_is_current(context[0], context[2])
+        ]
+        if not current_contexts:
+            raise HTTPException(
+                status_code=422,
+                detail="Worker needs a current employment in the device company",
+            )
+        if len(current_contexts) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Select the company employment for this worker",
+            )
+        employment, person, company, employment_site = current_contexts[0]
+
+    if not person.active:
+        raise HTTPException(status_code=422, detail="Inactive workers cannot be enrolled")
+    if not _employment_is_current(employment, company):
+        raise HTTPException(
+            status_code=422,
+            detail="Enrollment requires a current employment",
+        )
+    if device_site is not None and device_site.company_id != employment.company_id:
+        raise HTTPException(status_code=422, detail="Device belongs to another company")
     allowed_methods = {"face", "fingerprint", "palm", "card", "password"}
     methods = {method.lower() for method in payload.methods}
     if not methods.issubset(allowed_methods):
@@ -1469,7 +1609,7 @@ async def create_enrollment_request(
     await session.flush()
     await _audit(session, user, "enrollment_request.create", "enrollment_request", row.id, rid)
     await session.commit()
-    return _enrollment_out(row)
+    return _enrollment_out(row, employment, person, company, employment_site)
 
 
 @enrollments_router.patch("/{request_id}", response_model=EnrollmentRequestOut)
@@ -1523,4 +1663,10 @@ async def update_enrollment_request(
         row.completed_by = user.id
     await _audit(session, user, "enrollment_request.update", "enrollment_request", row.id, rid)
     await session.commit()
-    return _enrollment_out(row)
+    context = (
+        await session.execute(
+            _enrollment_context_query().where(Employment.id == row.employment_id)
+        )
+    ).tuples()
+    employment, person, company, site = context.one()
+    return _enrollment_out(row, employment, person, company, site)

@@ -15,6 +15,7 @@ import type {
   DailyArrivalReport,
   Employment,
   EmploymentCompensation,
+  EnrollmentCandidate,
   EnrollmentRequest,
   LivePunctualityReport,
   Holiday,
@@ -463,6 +464,10 @@ class ApiClient {
 
   enrollmentRequests(): Promise<EnrollmentRequest[]> {
     return this.request("/api/v1/enrollment-requests");
+  }
+
+  enrollmentCandidates(deviceId: string): Promise<EnrollmentCandidate[]> {
+    return this.get("/api/v1/enrollment-requests/eligible-workers", { device_id: deviceId });
   }
 
   createEnrollmentRequest(body: Record<string, unknown>): Promise<EnrollmentRequest> {

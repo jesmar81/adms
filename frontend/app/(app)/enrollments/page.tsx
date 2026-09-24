@@ -9,7 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Can } from "@/lib/auth";
+import { Can, useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -20,7 +20,7 @@ import { DataTable } from "@/components/ui/table";
 import type { Column } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
-import type { Device, Employment, EnrollmentRequest } from "@/types";
+import type { Device, EnrollmentCandidate, EnrollmentRequest } from "@/types";
 
 const METHODS = ["face", "fingerprint", "palm", "card"] as const;
 
@@ -40,7 +40,7 @@ const FINGERS = [
 const FINGER_LABELS = Object.fromEntries(FINGERS.map((finger) => [finger.id, `${finger.hand}: ${finger.label}`]));
 
 const COLUMNS: Column<EnrollmentRequest>[] = [
-  { key: "employment", header: "Empleo", render: (row) => <span className="font-mono text-[13px]">{row.employment_id}</span> },
+  { key: "worker", header: "Trabajador", render: (row) => <div><p className="font-medium">{row.worker_name}</p><p className="text-xs text-muted">{row.employee_number} · {row.company_name}{row.site_name ? ` · ${row.site_name}` : ""}</p></div> },
   { key: "device", header: "Reloj", render: (row) => <span className="font-mono text-[13px]">{row.device_id}</span> },
   {
     key: "methods",
@@ -61,10 +61,13 @@ const COLUMNS: Column<EnrollmentRequest>[] = [
 
 export default function EnrollmentsPage() {
   const { notify } = useToast();
+  const { can } = useAuth();
   const [requests, setRequests] = useState<EnrollmentRequest[]>([]);
-  const [employments, setEmployments] = useState<Employment[]>([]);
+  const [candidates, setCandidates] = useState<EnrollmentCandidate[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [employmentId, setEmploymentId] = useState("");
+  const [personId, setPersonId] = useState("");
+  const [workerSearch, setWorkerSearch] = useState("");
   const [deviceId, setDeviceId] = useState("");
   const [methods, setMethods] = useState<string[]>(["face"]);
   const [fingers, setFingers] = useState<string[]>([]);
@@ -72,43 +75,85 @@ export default function EnrollmentsPage() {
   const [consentReference, setConsentReference] = useState("");
   const [verifyingRow, setVerifyingRow] = useState<EnrollmentRequest | null>(null);
   const [verificationReference, setVerificationReference] = useState("");
-  const [error, setError] = useState<unknown>(null);
-  const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [requestsError, setRequestsError] = useState<unknown>(null);
+  const [devicesError, setDevicesError] = useState<unknown>(null);
+  const [candidatesError, setCandidatesError] = useState<unknown>(null);
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidateRetry, setCandidateRetry] = useState(0);
+  const [deviceRetry, setDeviceRetry] = useState(0);
   const [saving, setSaving] = useState(false);
   const [updatingId, setUpdatingId] = useState("");
-  const employmentById = useMemo(
-    () => new Map(employments.map((employment) => [employment.id, employment])),
-    [employments],
-  );
   const deviceById = useMemo(
     () => new Map(devices.map((device) => [device.id, device])),
     [devices],
   );
   const hasFingerprints = methods.includes("fingerprint");
   const hasBiometrics = methods.some((method) => ["face", "fingerprint", "palm"].includes(method));
+  const filteredCandidates = useMemo(() => {
+    const search = workerSearch.trim().toLocaleLowerCase();
+    if (!search) return candidates;
+    return candidates.filter((candidate) => [
+      candidate.worker_name,
+      candidate.employee_number,
+      candidate.company_name,
+      candidate.site_name ?? "",
+      candidate.position ?? "",
+    ].join(" ").toLocaleLowerCase().includes(search));
+  }, [candidates, workerSearch]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadRequests = useCallback(async () => {
+    setRequestsLoading(true);
+    setRequestsError(null);
     try {
-      const [loadedRequests, loadedEmployments, loadedDevices] = await Promise.all([
-        api.enrollmentRequests(),
-        api.employments(),
-        api.devices(),
-      ]);
-      setRequests(loadedRequests);
-      setEmployments(loadedEmployments);
-      setDevices(loadedDevices);
+      setRequests(await api.enrollmentRequests());
     } catch (cause) {
-      setError(cause);
+      setRequestsError(cause);
     } finally {
-      setLoading(false);
+      setRequestsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadRequests();
+  }, [loadRequests]);
+
+  useEffect(() => {
+    let current = true;
+    setDevicesLoading(true);
+    setDevicesError(null);
+    void api.devices().then((loadedDevices) => {
+      if (current) setDevices(loadedDevices);
+    }).catch((cause) => {
+      if (current) setDevicesError(cause);
+    }).finally(() => {
+      if (current) setDevicesLoading(false);
+    });
+    return () => { current = false; };
+  }, [deviceRetry]);
+
+  useEffect(() => {
+    let current = true;
+    setCandidates([]);
+    setCandidatesError(null);
+    setEmploymentId("");
+    setPersonId("");
+    if (!deviceId || !can("enrollments.write")) {
+      setCandidatesLoading(false);
+      return () => { current = false; };
+    }
+    setCandidatesLoading(true);
+    void api.enrollmentCandidates(deviceId).then((loadedCandidates) => {
+      if (current) setCandidates(loadedCandidates);
+    }).catch((cause) => {
+      if (current) setCandidatesError(cause);
+    }).finally(() => {
+      if (current) setCandidatesLoading(false);
+    });
+    return () => { current = false; };
+  }, [deviceId, can, candidateRetry]);
 
   function toggleMethod(method: string) {
     setMethods((current) => {
@@ -128,10 +173,12 @@ export default function EnrollmentsPage() {
   }
 
   async function create() {
-    if (!employmentId || !deviceId || methods.length === 0 || saving || (hasFingerprints && !fingers.length) || (hasBiometrics && (!consentObtained || consentReference.trim().length < 3))) return;
+    if (!personId || !employmentId || !deviceId || methods.length === 0 || saving || (hasFingerprints && !fingers.length) || (hasBiometrics && (!consentObtained || consentReference.trim().length < 3))) return;
     setSaving(true);
+    setActionError(null);
     try {
       await api.createEnrollmentRequest({
+        person_id: personId,
         employment_id: employmentId,
         device_id: deviceId,
         methods,
@@ -139,6 +186,9 @@ export default function EnrollmentsPage() {
         consent_obtained: consentObtained,
         consent_reference: consentReference.trim() || null,
       });
+      setEmploymentId("");
+      setPersonId("");
+      setWorkerSearch("");
       setMethods(["face"]);
       setFingers([]);
       setConsentObtained(false);
@@ -147,9 +197,9 @@ export default function EnrollmentsPage() {
         message: "Las posiciones de huella seleccionadas quedaron registradas para el enrolamiento presencial.",
         tone: "success",
       });
-      await load();
+      await loadRequests();
     } catch (cause) {
-      setError(cause);
+      setActionError(cause);
     } finally {
       setSaving(false);
     }
@@ -166,16 +216,17 @@ export default function EnrollmentsPage() {
     const next = nextByStatus[row.status];
     if (!next || updatingId) return;
     setUpdatingId(row.id);
+    setActionError(null);
     try {
       await api.updateEnrollmentRequest(row.id, { status: next, verification_reference: reference || null });
       notify("Estado actualizado", { message: "La solicitud avanzó de forma controlada.", tone: "success" });
-      await load();
+      await loadRequests();
       if (next === "identity_verified") {
         setVerifyingRow(null);
         setVerificationReference("");
       }
     } catch (cause) {
-      setError(cause);
+      setActionError(cause);
     } finally {
       setUpdatingId("");
     }
@@ -184,7 +235,6 @@ export default function EnrollmentsPage() {
   const requestColumns: Column<EnrollmentRequest>[] = COLUMNS.map((column) => ({
     ...column,
     render: (row) => {
-      if (column.key === "employment") return employmentById.get(row.employment_id)?.employee_number ?? row.employment_id;
       if (column.key === "device") return deviceById.get(row.device_id)?.name ?? deviceById.get(row.device_id)?.serial_number ?? row.device_id;
       return column.render(row);
     },
@@ -203,23 +253,42 @@ export default function EnrollmentsPage() {
   return (
     <>
       <PageHeader title="Enrolamientos" description="Solicitudes profesionales de credenciales; las plantillas biométricas nunca salen del reloj." crumbs={[{ label: "Enrolamientos" }]} />
-      {error ? <div className="mb-4"><ErrorState error={error} onRetry={() => void load()} /></div> : null}
-      <Card className="mb-5 overflow-hidden">
-        <div className="border-b border-line-subtle bg-surface-raised/80 px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-soft text-accent"><ShieldCheck className="h-5 w-5" /></span><div><h2 className="font-semibold">Nueva solicitud de enrolamiento</h2><p className="text-sm text-muted">Selecciona la credencial y, para huellas, las posiciones exactas a registrar.</p></div></div></div>
-        <div className="p-5"><div className="grid gap-4 lg:grid-cols-2"><Field label="Empleo">{(id) => <Select id={id} value={employmentId} onChange={(event) => setEmploymentId(event.target.value)}><option value="">Selecciona un empleo</option>{employments.map((employment) => <option key={employment.id} value={employment.id}>{employment.employee_number} · {employment.position ?? "Sin puesto"}</option>)}</Select>}</Field><Field label="Reloj autorizado">{(id) => <Select id={id} value={deviceId} onChange={(event) => setDeviceId(event.target.value)}><option value="">Selecciona un reloj</option>{devices.map((device) => <option key={device.id} value={device.id}>{device.name ?? device.serial_number}</option>)}</Select>}</Field></div>
+      {actionError ? <div className="mb-4"><ErrorState error={actionError} /></div> : null}
+      {can("enrollments.write") ? <Card className="mb-5 overflow-hidden">
+        <div className="border-b border-line-subtle bg-surface-raised/80 px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-soft text-accent"><ShieldCheck className="h-5 w-5" /></span><div><h2 className="font-semibold">Nueva solicitud de enrolamiento</h2><p className="text-sm text-muted">Selecciona al trabajador por su nombre. Se validará su empleo vigente con la empresa del reloj.</p></div></div></div>
+        <div className="p-5">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="Reloj autorizado">{(id) => <Select id={id} value={deviceId} onChange={(event) => { setDeviceId(event.target.value); setEmploymentId(""); setPersonId(""); setWorkerSearch(""); }} disabled={devicesLoading || Boolean(devicesError)}><option value="">{devicesLoading ? "Cargando relojes…" : devices.length ? "Selecciona un reloj" : "Sin relojes disponibles"}</option>{devices.map((device) => <option key={device.id} value={device.id}>{device.name ?? device.serial_number}</option>)}</Select>}</Field>
+            <Field label="Buscar trabajador">{(id) => <Input id={id} type="search" value={workerSearch} onChange={(event) => { setWorkerSearch(event.target.value); setEmploymentId(""); setPersonId(""); }} placeholder="Nombre, número, empresa o sucursal" disabled={!deviceId || candidatesLoading} />}</Field>
+          </div>
+          {devicesError ? <div className="mt-4"><ErrorState error={devicesError} onRetry={() => setDeviceRetry((value) => value + 1)} /></div> : null}
+          {!devicesLoading && !devicesError && devices.length === 0 ? <p className="mt-2 text-xs text-muted">No hay relojes visibles para tu usuario o empresa. Revisa que el reloj esté asignado a una sucursal autorizada.</p> : null}
+          {deviceId ? <div className="mt-4">
+            <Field label="Trabajador">{(id) => <Select id={id} value={employmentId} onChange={(event) => {
+              const candidate = candidates.find((item) => item.employment_id === event.target.value);
+              setEmploymentId(candidate?.employment_id ?? "");
+              setPersonId(candidate?.person_id ?? "");
+            }} disabled={candidatesLoading || Boolean(candidatesError) || !filteredCandidates.length}>
+              <option value="">{candidatesLoading ? "Cargando trabajadores…" : filteredCandidates.length ? "Selecciona un trabajador" : "Sin trabajadores disponibles"}</option>
+              {filteredCandidates.map((candidate) => <option key={candidate.employment_id} value={candidate.employment_id}>{candidate.worker_name} · {candidate.employee_number} · {candidate.company_name}{candidate.site_name ? ` · ${candidate.site_name}` : ""}{candidate.position ? ` · ${candidate.position}` : ""}</option>)}
+            </Select>}</Field>
+            {candidatesError ? <div className="mt-3"><ErrorState error={candidatesError} onRetry={() => setCandidateRetry((value) => value + 1)} /></div> : null}
+            {!candidatesLoading && !candidatesError && candidates.length === 0 ? <p className="mt-2 text-xs text-muted">No hay trabajadores con empleo vigente en la empresa de este reloj. Revisa el empleo desde el expediente del trabajador.</p> : null}
+            {!candidatesLoading && !candidatesError && candidates.length > 0 && filteredCandidates.length === 0 ? <p className="mt-2 text-xs text-muted">No hay trabajadores que coincidan con la búsqueda.</p> : null}
+          </div> : <p className="mt-3 text-xs text-muted">Elige un reloj para mostrar a los trabajadores que pueden enrolarse ahí.</p>}
           <div className="mt-6"><p className="text-sm font-medium text-foreground">Credenciales a enrolar</p><div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{METHODS.map((method) => { const active = methods.includes(method); const Icon = method === "fingerprint" ? Fingerprint : Hand; return <button type="button" key={method} onClick={() => toggleMethod(method)} aria-pressed={active} className={`rounded-xl border p-4 text-left transition-colors ${active ? "border-accent/50 bg-accent-soft shadow-glow" : "border-line-subtle bg-surface-raised hover:bg-surface-hover"}`}><Icon className={`h-5 w-5 ${active ? "text-accent" : "text-muted"}`} /><p className="mt-3 font-medium capitalize text-foreground">{method === "face" ? "Rostro" : method === "fingerprint" ? "Huellas" : method === "palm" ? "Palma" : "Tarjeta"}</p><p className="mt-1 text-xs text-muted">{active ? "Incluido en la solicitud" : "No seleccionado"}</p></button>; })}</div></div>
           {hasFingerprints ? <FingerprintSelector selected={fingers} onToggle={toggleFinger} /> : null}
           {hasBiometrics ? <div className="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4"><label className="flex min-h-11 items-start gap-3 text-sm"><input type="checkbox" className="mt-1 shrink-0" checked={consentObtained} onChange={(event) => setConsentObtained(event.target.checked)} /><span><span className="block font-medium text-amber-200">Consentimiento biométrico documentado</span><span className="mt-0.5 block text-xs text-amber-300">Confirma que RR. HH. conserva el documento o folio aplicable.</span></span></label><div className="mt-3"><Field label="Folio o referencia del consentimiento">{(id) => <Input id={id} value={consentReference} onChange={(event) => setConsentReference(event.target.value)} placeholder="Ej. CONS-2026-0042" />}</Field></div></div> : null}
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line-subtle pt-5"><p className="text-xs text-muted">La solicitud conserva posiciones y evidencia de consentimiento; las plantillas se quedan exclusivamente en el dispositivo.</p><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void create()} loading={saving} disabled={!employmentId || !deviceId || !methods.length || (hasFingerprints && !fingers.length) || (hasBiometrics && (!consentObtained || consentReference.trim().length < 3))}>Crear solicitud</Button></div>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line-subtle pt-5"><p className="text-xs text-muted">La solicitud conserva posiciones y evidencia de consentimiento; las plantillas se quedan exclusivamente en el dispositivo.</p><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void create()} loading={saving} disabled={!personId || !employmentId || !deviceId || !methods.length || candidatesLoading || (hasFingerprints && !fingers.length) || (hasBiometrics && (!consentObtained || consentReference.trim().length < 3))}>Crear solicitud</Button></div>
         </div>
-      </Card>
-      {loading ? <LoadingState rows={5} /> : <DataTable ariaLabel="Solicitudes de enrolamiento" columns={requestColumns} data={requests} keyOf={(row) => row.id} renderCard={(row) => {
+      </Card> : null}
+      {requestsError ? <div className="mb-4"><ErrorState error={requestsError} onRetry={() => void loadRequests()} /></div> : null}
+      {requestsLoading ? <LoadingState rows={5} /> : requestsError ? null : <DataTable ariaLabel="Solicitudes de enrolamiento" columns={requestColumns} data={requests} keyOf={(row) => row.id} renderCard={(row) => {
         const labels: Record<string, string> = { requested: "Verificar identidad", identity_verified: "Aprobar", approved: "Enviar a enrolar", awaiting_device_enrollment: "Verificar credencial", verification_pending: "Completar" };
         const label = labels[row.status];
-        const employment = employmentById.get(row.employment_id);
         const device = deviceById.get(row.device_id);
         return <div>
-          <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium text-foreground">{employment?.employee_number ?? "Empleo"}</p><p className="mt-0.5 truncate text-xs text-muted">{device?.name ?? device?.serial_number ?? "Reloj"}</p></div><span className="max-w-[42%] rounded-md border border-line-subtle bg-surface-raised px-2.5 py-1 text-right text-xs capitalize text-muted break-words">{row.status.replaceAll("_", " ")}</span></div>
+          <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium text-foreground">{row.worker_name}</p><p className="mt-0.5 truncate text-xs text-muted">{row.employee_number} · {row.company_name}{row.site_name ? ` · ${row.site_name}` : ""}</p><p className="mt-0.5 truncate text-xs text-muted">{device?.name ?? device?.serial_number ?? row.device_id}</p></div><span className="max-w-[42%] rounded-md border border-line-subtle bg-surface-raised px-2.5 py-1 text-right text-xs capitalize text-muted break-words">{row.status.replaceAll("_", " ")}</span></div>
           <p className="mt-3 text-xs text-muted">Credenciales: {row.methods.join(", ")}</p>
           {row.fingerprint_positions.length ? <p className="mt-1 text-xs text-muted">Huellas: {row.fingerprint_positions.map((finger) => FINGER_LABELS[finger] ?? finger).join(" · ")}</p> : null}
           {label ? <div className="mt-3 border-t border-line-subtle pt-2"><Can permission="enrollments.approve"><Button size="sm" variant="secondary" icon={row.status === "verification_pending" ? <CheckCircle2 className="h-4 w-4" /> : <CircleArrowRight className="h-4 w-4" />} onClick={() => row.status === "requested" ? setVerifyingRow(row) : void advance(row)} loading={updatingId === row.id}>{label}</Button></Can></div> : null}

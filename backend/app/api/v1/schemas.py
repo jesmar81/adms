@@ -435,7 +435,10 @@ class ScheduleAssignmentOut(ScheduleAssignmentIn):
 
 
 class EnrollmentRequestIn(BaseModel):
-    employment_id: uuid.UUID
+    # person_id identifies the worker; employment_id retains the company-specific
+    # context already stored by enrollment records.
+    person_id: uuid.UUID | None = None
+    employment_id: uuid.UUID | None = None
     device_id: uuid.UUID
     methods: list[str] = Field(min_length=1, max_length=4)
     fingerprint_positions: list[str] = Field(default_factory=list, max_length=10)
@@ -454,7 +457,13 @@ class EnrollmentRequestStatusIn(BaseModel):
 
 class EnrollmentRequestOut(BaseModel):
     id: uuid.UUID
+    person_id: uuid.UUID
+    worker_name: str
     employment_id: uuid.UUID
+    employee_number: str
+    company_name: str
+    site_name: str | None = None
+    position: str | None = None
     device_id: uuid.UUID
     methods: list[str]
     fingerprint_positions: list[str] = Field(default_factory=list)
@@ -471,6 +480,17 @@ class EnrollmentRequestOut(BaseModel):
     note: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class EnrollmentCandidateOut(BaseModel):
+    person_id: uuid.UUID
+    worker_name: str
+    employment_id: uuid.UUID
+    employee_number: str
+    company_id: uuid.UUID
+    company_name: str
+    site_name: str | None = None
+    position: str | None = None
 
 
 class RefreshIn(BaseModel):

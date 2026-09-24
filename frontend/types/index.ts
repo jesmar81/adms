@@ -385,7 +385,13 @@ export interface Holiday {
 
 export interface EnrollmentRequest {
   id: string;
+  person_id: string;
+  worker_name: string;
   employment_id: string;
+  employee_number: string;
+  company_name: string;
+  site_name: string | null;
+  position: string | null;
   device_id: string;
   methods: string[];
   fingerprint_positions: string[];
@@ -400,6 +406,17 @@ export interface EnrollmentRequest {
   consent_recorded_at: string | null;
   consent_reference: string | null;
   note: string | null;
+}
+
+export interface EnrollmentCandidate {
+  person_id: string;
+  worker_name: string;
+  employment_id: string;
+  employee_number: string;
+  company_id: string;
+  company_name: string;
+  site_name: string | null;
+  position: string | null;
 }
 
 export interface DeviceCommand {
