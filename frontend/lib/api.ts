@@ -394,6 +394,13 @@ class ApiClient {
     });
   }
 
+  updateEmployment(employmentId: string, body: Record<string, unknown>): Promise<Employment> {
+    return this.request(`/api/v1/employments/${employmentId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
+
   employmentCompensation(employmentId: string): Promise<EmploymentCompensation> {
     return this.request(`/api/v1/employments/${employmentId}/compensation`);
   }
@@ -427,6 +434,13 @@ class ApiClient {
   assignWorkSchedule(employmentId: string, body: Record<string, unknown>): Promise<unknown> {
     return this.request(`/api/v1/employments/${employmentId}/schedule-assignments`, {
       method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  replaceCurrentWorkSchedule(employmentId: string, body: Record<string, unknown>): Promise<ScheduleAssignment> {
+    return this.request(`/api/v1/employments/${employmentId}/schedule-assignments/current`, {
+      method: "PUT",
       body: JSON.stringify(body),
     });
   }

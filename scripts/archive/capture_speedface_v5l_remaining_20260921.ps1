@@ -6,7 +6,7 @@ an already-authorized management system while dumpcap records the exchange.
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    # Not needed when only listing local capture interfaces.
     [ValidatePattern('^[0-9a-fA-F:.]+$')]
     [string]$DeviceIp,
 
@@ -53,6 +53,9 @@ $tshark = Find-WiresharkCommand 'tshark'
 if ($ListInterfaces) {
     & $dumpcap -D
     exit $LASTEXITCODE
+}
+if ([string]::IsNullOrWhiteSpace($DeviceIp)) {
+    throw 'Indica -DeviceIp con la IP real del reloj para iniciar la captura.'
 }
 if ([string]::IsNullOrWhiteSpace($Interface)) {
     throw 'Indica -Interface. Primero puedes ejecutar este script con -ListInterfaces.'

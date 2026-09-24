@@ -25,8 +25,8 @@ class CommandType(StrEnum):
     GET_OPTION = "GET_OPTION"
 
 
-_USER_COMMANDS = frozenset(
-    {CommandType.QUERY_USERINFO, CommandType.UPDATE_USERINFO, CommandType.DELETE_USERINFO}
+_USER_WRITE_COMMANDS = frozenset(
+    {CommandType.UPDATE_USERINFO, CommandType.DELETE_USERINFO}
 )
 
 
@@ -36,15 +36,17 @@ def is_security_push_device(device: Device) -> bool:
 
 
 def require_validated_user_command_profile(device: Device, command_type: CommandType) -> None:
-    """Require observed protocol evidence before using legacy USERINFO on ACC.
+    """Require evidence before changing users on ACC; allow read-only inventory.
 
     A supervised capture may opt in with
-    ``ZKTECO_ALLOW_UNVALIDATED_USER_COMMANDS=true``. That switch must remain
-    disabled in normal production operation.
+    ``ZKTECO_ALLOW_UNVALIDATED_USER_COMMANDS=true`` for user writes. Keep that
+    switch disabled in normal production operation. QUERY_USERINFO is
+    read-only, so it remains available to capture and validate the real wire
+    response without opening create, update, or delete operations.
     """
     if (
         is_security_push_device(device)
-        and command_type in _USER_COMMANDS
+        and command_type in _USER_WRITE_COMMANDS
         and not get_settings().zkteco_allow_unvalidated_user_commands
     ):
         raise DeviceProtocolEvidenceRequiredError(

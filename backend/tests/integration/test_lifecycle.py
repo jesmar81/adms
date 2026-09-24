@@ -291,6 +291,43 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-02"},
     )
     assert overlapping_assignment.status_code == 409
+    edited_employment = await life_client.put(
+        f"/api/v1/employments/{employment['id']}",
+        json={
+            "company_id": company["id"],
+            "employee_number": "A-01",
+            "started_on": "2026-01-01",
+            "position": "Supervisora",
+            "contract_type": "Individual",
+        },
+    )
+    assert edited_employment.status_code == 200
+    assert edited_employment.json()["position"] == "Supervisora"
+    second_schedule = (
+        await life_client.post(
+            "/api/v1/work-schedules",
+            json={"company_id": company["id"], "name": "Turno B", "slots": slots},
+        )
+    ).json()
+    replaced = await life_client.put(
+        f"/api/v1/employments/{employment['id']}/schedule-assignments/current",
+        json={"work_schedule_id": second_schedule["id"], "effective_from": "2026-02-01"},
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["work_schedule_id"] == second_schedule["id"]
+    assignment_history = (
+        await life_client.get(f"/api/v1/employments/{employment['id']}/schedule-assignments")
+    ).json()
+    assert len(assignment_history) == 2
+    assert next(item for item in assignment_history if item["id"] == assignment.json()["id"])[
+        "effective_to"
+    ] == "2026-01-31"
+    assert sum(item["active"] and item["effective_to"] is None for item in assignment_history) == 1
+    before_current = await life_client.put(
+        f"/api/v1/employments/{employment['id']}/schedule-assignments/current",
+        json={"work_schedule_id": schedule["id"], "effective_from": "2026-01-15"},
+    )
+    assert before_current.status_code == 409
     compensation = await life_client.put(
         f"/api/v1/employments/{employment['id']}/compensation",
         json={
@@ -410,7 +447,25 @@ async def test_security_push_capabilities_are_evidence_based(life_client) -> Non
     assert profile["profile"] == "security_push_acc"
     assert profile["confirmed"]["realtime_attendance"] is True
     assert profile["confirmed"]["info_command"] is True
-    assert "user_import" in profile["blocked_operations"]
+    assert "QUERY_USERINFO" in profile["safe_commands"]
+    assert "UPDATE_USERINFO" not in profile["safe_commands"]
+    assert "user_update" in profile["blocked_operations"]
+    assert "user_import" not in profile["blocked_operations"]
+
+    # A read-only inventory request is the supervised probe; user writes stay
+    # blocked until firmware-specific evidence has been reviewed.
+    query = await life_client.post(
+        f"/api/v1/devices/{device_id}/commands",
+        json={"command_type": "QUERY_USERINFO", "params": {}},
+    )
+    assert query.status_code == 201
+    assert query.json()["command"] == "DATA QUERY USERINFO"
+    update = await life_client.post(
+        f"/api/v1/devices/{device_id}/commands",
+        json={"command_type": "UPDATE_USERINFO", "params": {"pin": "1", "name": "Lab"}},
+    )
+    assert update.status_code == 409
+    assert update.json()["error"]["code"] == "DEVICE_PROTOCOL_EVIDENCE_REQUIRED"
 
 
 async def test_failed_confirm_marks_failed(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]

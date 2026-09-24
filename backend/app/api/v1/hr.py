@@ -853,6 +853,50 @@ async def create_employment(
     return row
 
 
+@employments_router.put("/{employment_id}", response_model=EmploymentOut)
+async def update_employment(
+    employment_id: uuid.UUID,
+    payload: EmploymentIn,
+    user: User = Depends(deps.require_permission("employments.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> Employment:
+    row = await access_svc.require_employment(session, user, employment_id)
+    if payload.company_id != row.company_id:
+        raise HTTPException(status_code=422, detail="An employment cannot move to another company")
+    if payload.site_id is not None:
+        site = await access_svc.require_site(session, user, payload.site_id)
+        if site.company_id != row.company_id:
+            raise HTTPException(status_code=422, detail="Site belongs to another company")
+    if payload.ended_on is not None and payload.ended_on < payload.started_on:
+        raise HTTPException(status_code=422, detail="ended_on must not precede started_on")
+    if payload.probation_ends_on is not None and payload.probation_ends_on < payload.started_on:
+        raise HTTPException(status_code=422, detail="probation_ends_on must not precede started_on")
+    first_schedule_date = await session.scalar(
+        select(ScheduleAssignment.effective_from)
+        .where(ScheduleAssignment.employment_id == row.id, ScheduleAssignment.active.is_(True))
+        .order_by(ScheduleAssignment.effective_from)
+        .limit(1)
+    )
+    if first_schedule_date is not None and payload.started_on > first_schedule_date:
+        raise HTTPException(status_code=409, detail="Employment start would exclude schedule history")
+    if payload.employee_number != row.employee_number:
+        duplicate = await session.scalar(
+            select(Employment.id).where(
+                Employment.company_id == row.company_id,
+                Employment.employee_number == payload.employee_number,
+                Employment.id != row.id,
+            )
+        )
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="Employee number already exists in company")
+    for key, value in payload.model_dump(exclude={"company_id"}).items():
+        setattr(row, key, value)
+    await _audit(session, user, "employment.update", "employment", row.id, rid)
+    await session.commit()
+    return row
+
+
 def _compensation_out(row: EmploymentCompensation) -> EmploymentCompensationOut:
     try:
         return EmploymentCompensationOut(
@@ -1221,6 +1265,79 @@ async def assign_schedule(
     session.add(row)
     await session.flush()
     await _audit(session, user, "schedule_assignment.create", "schedule_assignment", row.id, rid)
+    await session.commit()
+    return row
+
+
+@employments_router.put(
+    "/{employment_id}/schedule-assignments/current", response_model=ScheduleAssignmentOut
+)
+async def replace_current_schedule(
+    employment_id: uuid.UUID,
+    payload: ScheduleAssignmentIn,
+    user: User = Depends(deps.require_permission("schedules.write")),
+    session: AsyncSession = Depends(get_db),
+    rid: str = Depends(deps.request_id),
+) -> ScheduleAssignment:
+    employment = await access_svc.require_employment(session, user, employment_id)
+    # Serialize changes for this employment before reading its assignment.
+    await session.execute(select(Employment.id).where(Employment.id == employment_id).with_for_update())
+    schedule = await session.get(WorkSchedule, payload.work_schedule_id)
+    if schedule is None or not schedule.active:
+        raise HTTPException(status_code=404, detail="Active work schedule not found")
+    await access_svc.require_company(session, user, schedule.company_id)
+    if schedule.company_id != employment.company_id:
+        raise HTTPException(status_code=422, detail="Schedule belongs to another company")
+    if payload.effective_to is not None:
+        raise HTTPException(status_code=422, detail="Current schedule must remain open-ended")
+    if payload.effective_from < employment.started_on or (
+        employment.ended_on is not None and payload.effective_from > employment.ended_on
+    ):
+        raise HTTPException(status_code=422, detail="Schedule date is outside employment dates")
+
+    current = await session.scalar(
+        select(ScheduleAssignment)
+        .where(
+            ScheduleAssignment.employment_id == employment_id,
+            ScheduleAssignment.active.is_(True),
+            ScheduleAssignment.effective_to.is_(None),
+        )
+        .with_for_update()
+    )
+    if current is not None and payload.effective_from < current.effective_from:
+        raise HTTPException(status_code=409, detail="New schedule cannot start before current one")
+    if current is not None and current.work_schedule_id == schedule.id:
+        await session.commit()
+        return current
+    if current is not None and payload.effective_from == current.effective_from:
+        current.work_schedule_id = schedule.id
+        await _audit(session, user, "schedule_assignment.correct", "schedule_assignment", current.id, rid)
+        await session.commit()
+        return current
+
+    conflicts = select(ScheduleAssignment.id).where(
+        ScheduleAssignment.employment_id == employment_id,
+        ScheduleAssignment.active.is_(True),
+        or_(
+            ScheduleAssignment.effective_to.is_(None),
+            ScheduleAssignment.effective_to >= payload.effective_from,
+        ),
+    )
+    if current is not None:
+        conflicts = conflicts.where(ScheduleAssignment.id != current.id)
+    if await session.scalar(conflicts.limit(1)) is not None:
+        raise HTTPException(status_code=409, detail="Schedule assignment overlaps another period")
+    if current is not None:
+        current.effective_to = payload.effective_from - timedelta(days=1)
+        await session.flush()
+    row = ScheduleAssignment(
+        employment_id=employment_id,
+        work_schedule_id=schedule.id,
+        effective_from=payload.effective_from,
+    )
+    session.add(row)
+    await session.flush()
+    await _audit(session, user, "schedule_assignment.replace", "schedule_assignment", row.id, rid)
     await session.commit()
     return row
 

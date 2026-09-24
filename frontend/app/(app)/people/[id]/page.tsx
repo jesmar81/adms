@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Banknote, CalendarDays, Camera, Clock3, Fingerprint, Pencil, Plus, Save, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, Camera, Clock3, Fingerprint, Pencil, Save, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -13,20 +13,27 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { DataTable } from "@/components/ui/table";
 import type { Column } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
+import { EmploymentSections } from "@/components/people/EmploymentSections";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
-import type { AttendanceRow, Company, Employment, Person, PersonDeviceUserLink, ScheduleAssignment, Site, WorkSchedule } from "@/types";
+import type { AttendanceRow, Company, Employment, Person, PersonDeviceUserLink, ScheduleAssignment, WorkSchedule } from "@/types";
 
-const PROFILE_FIELDS = [
+const PERSONAL_FIELDS = [
   ["first_name", "Nombre(s)", "text"], ["last_name", "Apellido paterno", "text"], ["second_last_name", "Apellido materno", "text"],
   ["preferred_name", "Nombre preferido", "text"], ["phone", "Teléfono", "tel"], ["email", "Correo", "email"], ["birth_date", "Fecha de nacimiento", "date"],
   ["sex", "Sexo", "text"], ["marital_status", "Estado civil", "text"], ["nationality", "Nacionalidad", "text"],
-  ["birth_state", "Entidad de nacimiento", "text"], ["address_street", "Calle", "text"],
+  ["birth_state", "Entidad de nacimiento", "text"],
+] as const;
+
+const ADDRESS_FIELDS = [
+  ["address_street", "Calle", "text"],
   ["address_ext_number", "No. exterior", "text"], ["address_int_number", "No. interior", "text"],
   ["address_neighborhood", "Colonia", "text"], ["address_municipality", "Municipio / alcaldía", "text"],
   ["address_state", "Estado", "text"], ["postal_code", "Código postal", "text"],
 ] as const;
+
+const PROFILE_FIELDS = [...PERSONAL_FIELDS, ...ADDRESS_FIELDS] as const;
 
 const MEXICAN_STATES = [
   "Aguascalientes", "Baja California", "Baja California Sur", "Campeche", "Chiapas", "Chihuahua", "Ciudad de México", "Coahuila de Zaragoza", "Colima", "Durango", "Estado de México", "Guanajuato", "Guerrero", "Hidalgo", "Jalisco", "Michoacán de Ocampo", "Morelos", "Nayarit", "Nuevo León", "Oaxaca", "Puebla", "Querétaro", "Quintana Roo", "San Luis Potosí", "Sinaloa", "Sonora", "Tabasco", "Tamaulipas", "Tlaxcala", "Veracruz de Ignacio de la Llave", "Yucatán", "Zacatecas",
@@ -54,7 +61,12 @@ function isoDate(value: Date) {
 }
 
 function initialDraft(person: Person): Record<string, string> {
-  return Object.fromEntries(PROFILE_FIELDS.map(([key]) => [key, person[key] ?? (key === "nationality" ? "Mexicana" : "")]));
+  return {
+    ...Object.fromEntries(PROFILE_FIELDS.map(([key]) => [key, person[key] ?? (key === "nationality" ? "Mexicana" : "")])),
+    emergency_contact_name: person.emergency_contact_name ?? "",
+    emergency_contact_phone: person.emergency_contact_phone ?? "",
+    emergency_contact_relationship: person.emergency_contact_relationship ?? "",
+  };
 }
 
 function PersonDetail({ id }: { id: string }) {
@@ -67,7 +79,6 @@ function PersonDetail({ id }: { id: string }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [employments, setEmployments] = useState<Employment[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [sites, setSites] = useState<Site[]>([]);
   const [schedules, setSchedules] = useState<WorkSchedule[]>([]);
   const [assignments, setAssignments] = useState<Record<string, ScheduleAssignment[]>>({});
   const [marks, setMarks] = useState<AttendanceRow[]>([]);
@@ -78,24 +89,24 @@ function PersonDetail({ id }: { id: string }) {
   const [sensitive, setSensitive] = useState<Record<string, string>>({});
   const [sensitiveOpen, setSensitiveOpen] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [companyId, setCompanyId] = useState("");
-  const [siteId, setSiteId] = useState("");
-  const [employeeNumber, setEmployeeNumber] = useState("");
-  const [position, setPosition] = useState("");
-  const [department, setDepartment] = useState("");
-  const [costCenter, setCostCenter] = useState("");
-  const [contractType, setContractType] = useState("");
-  const [relationType, setRelationType] = useState("");
-  const [jobCategory, setJobCategory] = useState("");
-  const [workLocation, setWorkLocation] = useState("");
-  const [probationEndsOn, setProbationEndsOn] = useState("");
   const [compensationEmployment, setCompensationEmployment] = useState<Employment | null>(null);
   const [compensation, setCompensation] = useState<Record<string, string>>({});
-  const [startedOn, setStartedOn] = useState(isoDate(today));
-  const [scheduleId, setScheduleId] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const refreshEmployments = useCallback(async () => {
+    const loadedEmployments = await api.employments({ person_id: id });
+    const companyIds = [...new Set(loadedEmployments.map((item) => item.company_id))];
+    const [relatedSchedules, assignmentLists] = await Promise.all([
+      Promise.all(companyIds.map((companyId) => api.workSchedules(companyId))),
+      Promise.all(loadedEmployments.map((item) => api.scheduleAssignments(item.id))),
+    ]);
+    setEmployments(loadedEmployments);
+    setSchedules(relatedSchedules.flat());
+    setAssignments(Object.fromEntries(loadedEmployments.map((item, index) => [item.id, assignmentLists[index]])));
+  }, [id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,7 +116,6 @@ function PersonDetail({ id }: { id: string }) {
         api.person(id),
         api.employments({ person_id: id }),
         api.companies(),
-        api.personAttendance(id, { date_from: new Date(dateFrom + "T00:00:00").toISOString(), date_to: new Date(dateTo + "T23:59:59").toISOString() }),
         api.personPhoto(id),
         can("device_users.read") ? api.personDeviceUsers(id) : Promise.resolve([] as PersonDeviceUserLink[]),
       ]);
@@ -120,30 +130,31 @@ function PersonDetail({ id }: { id: string }) {
       setCompanies(loaded[2]);
       setSchedules(relatedSchedules.flat());
       setAssignments(Object.fromEntries(loadedEmployments.map((item, index) => [item.id, assignmentLists[index]])));
-      setMarks(loaded[3].items);
-      setNextCursor(loaded[3].next_cursor);
-      setPhotoUrl(loaded[4] ? URL.createObjectURL(loaded[4]) : null);
-      setDeviceLinks(loaded[5]);
+      setPhotoUrl(loaded[3] ? URL.createObjectURL(loaded[3]) : null);
+      setDeviceLinks(loaded[4]);
     } catch (err) {
       setError(err);
     } finally {
       setLoading(false);
     }
-  }, [can, dateFrom, dateTo, id]);
+  }, [can, id]);
 
   useEffect(() => void load(), [load]);
 
-  useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
-
   useEffect(() => {
-    if (!companyId) return;
-    void Promise.all([api.workSchedules(companyId), api.sites(companyId)]).then(([items, loadedSites]) => {
-      setSchedules((current) => [...current.filter((item) => item.company_id !== companyId), ...items]);
-      setScheduleId(items[0]?.id ?? "");
-      setSites(loadedSites);
-      setSiteId(loadedSites[0]?.id ?? "");
-    }).catch(setError);
-  }, [companyId]);
+    let active = true;
+    setAttendanceLoading(true);
+    void api.personAttendance(id, {
+      date_from: new Date(dateFrom + "T00:00:00").toISOString(),
+      date_to: new Date(dateTo + "T23:59:59").toISOString(),
+    }).then((page) => {
+      if (active) { setMarks(page.items); setNextCursor(page.next_cursor); }
+    }).catch((err) => { if (active) setError(err); })
+      .finally(() => { if (active) setAttendanceLoading(false); });
+    return () => { active = false; };
+  }, [dateFrom, dateTo, id]);
+
+  useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
 
   async function saveProfile() {
     setSaving(true);
@@ -222,33 +233,6 @@ function PersonDetail({ id }: { id: string }) {
     }
   }
 
-  async function createEmployment() {
-    if (!companyId || !employeeNumber.trim() || saving) return;
-    setSaving(true);
-    try {
-      const employment = await api.createEmployment(id, { company_id: companyId, site_id: siteId || null, employee_number: employeeNumber.trim(), position: position.trim() || null, department: department.trim() || null, cost_center: costCenter.trim() || null, contract_type: contractType || null, employment_relation_type: relationType || null, job_category: jobCategory.trim() || null, work_location: workLocation.trim() || null, started_on: startedOn, probation_ends_on: probationEndsOn || null });
-      if (scheduleId) await api.assignWorkSchedule(employment.id, { work_schedule_id: scheduleId, effective_from: startedOn });
-      setCompanyId("");
-      setSiteId("");
-      setEmployeeNumber("");
-      setPosition("");
-      setDepartment("");
-      setCostCenter("");
-      setContractType("");
-      setRelationType("");
-      setJobCategory("");
-      setWorkLocation("");
-      setProbationEndsOn("");
-      setScheduleId("");
-      notify("Empleo creado", { message: "El horario quedó asociado a este empleo.", tone: "success" });
-      await load();
-    } catch (err) {
-      setError(err);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function openCompensation(employment: Employment) {
     try {
       const loaded = await api.employmentCompensation(employment.id);
@@ -305,25 +289,87 @@ function PersonDetail({ id }: { id: string }) {
   }
 
   const fullName = person ? [person.first_name, person.last_name, person.second_last_name].filter(Boolean).join(" ") : "Expediente";
-  const selectedSchedules = schedules.filter((item) => item.company_id === companyId);
   return (
     <>
       <PageHeader title={fullName} description="Expediente del trabajador, empleos, horarios y checadas del reloj." crumbs={[{ label: "Trabajadores", href: "/people" }, { label: "Expediente" }]} actions={<Link href="/people"><Button variant="secondary" icon={<ArrowLeft className="h-4 w-4" />}>Volver</Button></Link>} />
       {error ? <div className="mb-4"><ErrorState error={error} onRetry={() => void load()} /></div> : null}
       {loading ? <LoadingState rows={8} /> : <>
-        {can("device_users.read") ? <Card className="mb-5 p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><Fingerprint className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Identidades en reloj</p><p className="text-sm text-zinc-500">PIN y nombre configurado por dispositivo.</p></div></div><Link href="/device-users" className="text-xs font-medium text-accent-700 hover:text-accent-900">Administrar</Link></div><div className="mt-4 grid gap-2">{deviceLinks.length ? deviceLinks.map((link) => <div key={`${link.device_id}:${link.pin}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line-subtle bg-surface-raised/50 px-3 py-2.5"><div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{link.device_name || link.device_serial_number}</p><p className="mt-0.5 text-xs text-muted">PIN <span className="font-mono font-medium text-foreground">{link.pin}</span> · {link.device_serial_number}</p><p className="mt-0.5 truncate text-xs text-muted">Nombre en reloj: {link.device_name_on_terminal || "Sin nombre"}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-medium ${link.sync_state === "synced" ? "bg-emerald-500/10 text-emerald-300" : link.sync_state === "failed" ? "bg-rose-500/10 text-rose-300" : "bg-amber-500/10 text-amber-300"}`}>{link.sync_state === "synced" ? "Confirmado" : link.sync_state === "failed" ? "Fallido" : "Pendiente"}</span></div>) : <EmptyState icon={<Fingerprint className="h-5 w-5" />} title="Sin PIN vinculado" description="Importa o vincula el PIN desde Personal en reloj para asociar sus checadas con este expediente." />}</div></Card> : null}
-        <div className="grid gap-5 xl:grid-cols-2">
-          <Card className="p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><UserRound className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Datos personales y domicilio</p><p className="text-sm text-zinc-500">Comunes a todos los empleos del grupo.</p></div></div><div className="mt-5 flex flex-wrap items-center gap-4 rounded-xl bg-zinc-50 p-3"><div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-zinc-200">{photoUrl ? <img src={photoUrl} alt="Fotografía del trabajador" className="h-full w-full object-cover" /> : <UserRound className="h-8 w-8 text-zinc-400" />}</div><div className="min-w-0 flex-1"><Field label="Fotografía">{(fieldId) => <Input id={fieldId} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void updatePhoto(event.target.files?.[0])} disabled={saving} />}</Field></div>{photoUrl ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} className="w-10 !px-0" aria-label="Eliminar fotografía" title="Eliminar fotografía" onClick={() => void removePhoto()} disabled={saving} /> : <Camera className="h-5 w-5 shrink-0 text-zinc-400" />}</div><div className="mt-5 grid gap-3 sm:grid-cols-2">{PROFILE_FIELDS.map(([key, label, type]) => <Field key={key} label={label}>{(fieldId) => { const options = PROFILE_SELECT_OPTIONS[key]; return options ? <Select id={fieldId} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))}><option value="">Selecciona</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</Select> : <Input id={fieldId} type={type} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} />; }}</Field>)}</div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Field label="Contacto de emergencia">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_name: event.target.value }))} />}</Field><Field label="Teléfono emergencia">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_phone ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_phone: event.target.value }))} />}</Field><Field label="Parentesco">{(fieldId) => <Select id={fieldId} value={draft.emergency_contact_relationship ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_relationship: event.target.value }))}><option value="">Selecciona</option>{EMERGENCY_RELATIONSHIPS.map((relationship) => <option key={relationship} value={relationship}>{relationship}</option>)}</Select>}</Field></div><Button className="mt-5" variant="primary" icon={<Save className="h-4 w-4" />} onClick={() => void saveProfile()} loading={saving}>Guardar expediente</Button></Card>
+        <div className="space-y-5">
+          <Card className="p-5">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-accent-soft p-2 text-accent"><UserRound className="h-5 w-5" aria-hidden /></div>
+              <div><h2 className="font-semibold text-foreground">Expediente personal</h2><p className="text-sm text-muted">Estos datos pertenecen a la persona y son comunes a todos sus empleos.</p></div>
+            </div>
+            <div className="mt-5 flex flex-wrap items-center gap-4 rounded-lg border border-line-subtle bg-surface-raised/50 p-3">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-hover">
+                {photoUrl ? <img src={photoUrl} alt="Fotografía del trabajador" className="h-full w-full object-cover" /> : <UserRound className="h-8 w-8 text-muted" aria-hidden />}
+              </div>
+              <div className="min-w-0 flex-1"><Field label="Fotografía" hint="La fotografía se guarda al seleccionarla.">{(fieldId) => <Input id={fieldId} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void updatePhoto(event.target.files?.[0])} disabled={saving} />}</Field></div>
+              {photoUrl ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} aria-label="Eliminar fotografía" title="Eliminar fotografía" onClick={() => void removePhoto()} disabled={saving} /> : <Camera className="h-5 w-5 shrink-0 text-muted" aria-hidden />}
+            </div>
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-foreground">Identidad y contacto</h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {PERSONAL_FIELDS.map(([key, label, type]) => <Field key={key} label={label}>{(fieldId) => {
+                  const options = PROFILE_SELECT_OPTIONS[key];
+                  return options ? <Select id={fieldId} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))}><option value="">Selecciona</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</Select> : <Input id={fieldId} type={type} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} />;
+                }}</Field>)}
+              </div>
+            </div>
+            <div className="mt-6 border-t border-line-subtle pt-5">
+              <h3 className="text-sm font-semibold text-foreground">Domicilio</h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {ADDRESS_FIELDS.map(([key, label, type]) => <Field key={key} label={label}>{(fieldId) => {
+                  const options = PROFILE_SELECT_OPTIONS[key];
+                  return options ? <Select id={fieldId} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))}><option value="">Selecciona</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</Select> : <Input id={fieldId} type={type} value={draft[key] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} />;
+                }}</Field>)}
+              </div>
+            </div>
+            <div className="mt-6 border-t border-line-subtle pt-5">
+              <h3 className="text-sm font-semibold text-foreground">Contacto de emergencia</h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <Field label="Nombre">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_name: event.target.value }))} />}</Field>
+                <Field label="Teléfono">{(fieldId) => <Input id={fieldId} value={draft.emergency_contact_phone ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_phone: event.target.value }))} />}</Field>
+                <Field label="Parentesco">{(fieldId) => <Select id={fieldId} value={draft.emergency_contact_relationship ?? ""} onChange={(event) => setDraft((current) => ({ ...current, emergency_contact_relationship: event.target.value }))}><option value="">Selecciona</option>{EMERGENCY_RELATIONSHIPS.map((relationship) => <option key={relationship} value={relationship}>{relationship}</option>)}</Select>}</Field>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end border-t border-line-subtle pt-4">
+              <Button variant="primary" icon={<Save className="h-4 w-4" />} onClick={() => void saveProfile()} loading={saving} disabled={!draft.first_name?.trim() || !draft.last_name?.trim()}>Guardar datos personales</Button>
+            </div>
+          </Card>
           <div className="flex flex-col gap-5">
-            {can("people.sensitive.read") ? <Card className="p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><div className="rounded-xl bg-amber-50 p-2.5 text-amber-700"><ShieldCheck className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Datos fiscales y seguridad social</p><p className="text-sm text-zinc-500">CURP, RFC, NSS y datos CFDI se cifran antes de almacenarse.</p></div></div>{!sensitiveOpen ? <Button variant="secondary" icon={<Pencil className="h-4 w-4" />} className="w-10 !px-0" aria-label="Ver datos protegidos" title="Ver datos protegidos" onClick={() => void openSensitive()} /> : null}</div>{sensitiveOpen ? <div className="mt-5 grid gap-3 sm:grid-cols-3">{[["curp", "CURP"], ["rfc", "RFC"], ["nss", "NSS / IMSS"], ["fiscal_name", "Nombre fiscal"], ["tax_regime", "Régimen fiscal"], ["fiscal_postal_code", "CP fiscal"]].map(([key, label]) => <Field key={key} label={label}>{(fieldId) => <Input id={fieldId} value={sensitive[key] ?? ""} disabled={!can("people.sensitive.write")} onChange={(event) => setSensitive((current) => ({ ...current, [key]: event.target.value.toUpperCase() }))} />}</Field>)}{can("people.sensitive.write") ? <div className="sm:col-span-3"><Button variant="primary" icon={<Save className="h-4 w-4" />} className="w-10 !px-0" aria-label="Guardar datos protegidos" title="Guardar datos protegidos" onClick={() => void saveSensitive()} loading={saving} /></div> : null}</div> : null}</Card> : null}
-            <Card className="p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><CalendarDays className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Empleos y horarios</p><p className="text-sm text-zinc-500">Cada empleo mantiene su propio horario.</p></div></div><div className="mt-5 grid gap-3">{employments.length ? employments.map((employment) => { const assignment = assignments[employment.id]?.find((item) => item.active && !item.effective_to); const schedule = schedules.find((item) => item.id === assignment?.work_schedule_id); return <div key={employment.id} className="flex items-start justify-between gap-3 rounded-xl border border-line-subtle bg-zinc-50/60 px-4 py-3"><div><p className="font-medium">{employment.employee_number}</p><p className="mt-1 text-sm text-zinc-600">{[employment.position, employment.department].filter(Boolean).join(" · ") || "Puesto pendiente"}</p><p className="mt-1 text-xs text-zinc-500">{employment.employment_relation_type ?? "Relación pendiente"} · {employment.work_location ?? "Lugar pendiente"}</p><p className="mt-2 text-xs text-zinc-500">Horario: {schedule ? schedule.name : "Sin horario asignado"}</p></div><Button size="sm" variant="ghost" icon={<Banknote className="h-4 w-4" />} className="w-8 !px-0" aria-label="Editar nómina e IMSS" title="Editar nómina e IMSS" onClick={() => void openCompensation(employment)} /></div>; }) : <p className="text-sm text-zinc-500">Aún no hay empleos asignados.</p>}</div></Card>
+            {can("people.sensitive.read") ? <Card className="p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3"><div className="rounded-lg bg-amber-500/10 p-2 text-amber-400"><ShieldCheck className="h-5 w-5" aria-hidden /></div><div><h2 className="font-semibold text-foreground">Datos fiscales y seguridad social</h2><p className="text-sm text-muted">CURP, RFC, NSS y datos CFDI protegidos.</p></div></div>
+                {!sensitiveOpen ? <Button variant="secondary" icon={<Pencil className="h-4 w-4" />} onClick={() => void openSensitive()}>Ver y editar datos</Button> : null}
+              </div>
+              {sensitiveOpen ? <>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {[["curp", "CURP"], ["rfc", "RFC"], ["nss", "NSS / IMSS"], ["fiscal_name", "Nombre fiscal"], ["tax_regime", "Régimen fiscal"], ["fiscal_postal_code", "CP fiscal"]].map(([key, label]) => <Field key={key} label={label}>{(fieldId) => <Input id={fieldId} value={sensitive[key] ?? ""} disabled={!can("people.sensitive.write")} onChange={(event) => setSensitive((current) => ({ ...current, [key]: event.target.value.toUpperCase() }))} />}</Field>)}
+                </div>
+                {can("people.sensitive.write") ? <div className="mt-5 flex justify-end border-t border-line-subtle pt-4"><Button variant="primary" icon={<Save className="h-4 w-4" />} onClick={() => void saveSensitive()} loading={saving}>Guardar datos fiscales</Button></div> : null}
+              </> : null}
+            </Card> : null}
           </div>
         </div>
-        <Card className="mt-5 p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><Plus className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Agregar empleo</p><p className="text-sm text-zinc-500">Contrato, centro de trabajo y horario pertenecen a esta relación laboral.</p></div></div><div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5"><Field label="Empresa">{(fieldId) => <Select id={fieldId} value={companyId} onChange={(event) => setCompanyId(event.target.value)}><option value="">Selecciona</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.legal_name}</option>)}</Select>}</Field><Field label="Centro de trabajo">{(fieldId) => <Select id={fieldId} value={siteId} onChange={(event) => setSiteId(event.target.value)} disabled={!companyId}><option value="">Sin sitio</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</Select>}</Field><Field label="No. empleado">{(fieldId) => <Input id={fieldId} value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} />}</Field><Field label="Puesto">{(fieldId) => <Input id={fieldId} value={position} onChange={(event) => setPosition(event.target.value)} />}</Field><Field label="Departamento">{(fieldId) => <Input id={fieldId} value={department} onChange={(event) => setDepartment(event.target.value)} />}</Field><Field label="Centro de costo">{(fieldId) => <Input id={fieldId} value={costCenter} onChange={(event) => setCostCenter(event.target.value)} />}</Field><Field label="Relación laboral">{(fieldId) => <Select id={fieldId} value={relationType} onChange={(event) => setRelationType(event.target.value)}><option value="">Selecciona</option><option value="indeterminado">Tiempo indeterminado</option><option value="determinado">Tiempo determinado</option><option value="obra">Por obra</option><option value="capacitación">Capacitación inicial</option></Select>}</Field><Field label="Tipo de contrato">{(fieldId) => <Input id={fieldId} value={contractType} onChange={(event) => setContractType(event.target.value)} placeholder="Individual, colectivo…" />}</Field><Field label="Categoría">{(fieldId) => <Input id={fieldId} value={jobCategory} onChange={(event) => setJobCategory(event.target.value)} />}</Field><Field label="Lugar de trabajo">{(fieldId) => <Input id={fieldId} value={workLocation} onChange={(event) => setWorkLocation(event.target.value)} />}</Field><Field label="Inicio">{(fieldId) => <Input id={fieldId} type="date" value={startedOn} onChange={(event) => setStartedOn(event.target.value)} />}</Field><Field label="Fin de periodo prueba">{(fieldId) => <Input id={fieldId} type="date" value={probationEndsOn} onChange={(event) => setProbationEndsOn(event.target.value)} />}</Field><Field label="Horario inicial">{(fieldId) => <Select id={fieldId} value={scheduleId} onChange={(event) => setScheduleId(event.target.value)} disabled={!companyId}><option value="">Sin asignar ahora</option>{selectedSchedules.map((schedule) => <option key={schedule.id} value={schedule.id}>{schedule.name}</option>)}</Select>}</Field></div><Button className="mt-4 w-10 !px-0" variant="primary" icon={<Plus className="h-4 w-4" />} aria-label="Crear empleo" title="Crear empleo" onClick={() => void createEmployment()} loading={saving} disabled={!companyId || !employeeNumber.trim()} /></Card>
-        <Card className="mt-5 p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent-50 p-2.5 text-accent-700"><Clock3 className="h-5 w-5" /></div><div><p className="font-semibold text-zinc-800">Checadas capturadas</p><p className="text-sm text-zinc-500">Último mes por defecto; el año se consulta en bloques de 100.</p></div></div><div className="grid grid-cols-2 items-end gap-2 lg:flex lg:flex-wrap"><div className="min-w-0"><Field label="Desde">{(fieldId) => <Input id={fieldId} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />}</Field></div><div className="min-w-0"><Field label="Hasta">{(fieldId) => <Input id={fieldId} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />}</Field></div><Button variant="secondary" className="col-span-2 lg:col-span-1" onClick={() => { setDateFrom(String(today.getFullYear()) + "-01-01"); setDateTo(isoDate(today)); }}>Año actual</Button></div></div></Card>
-        <div className="mt-4"><DataTable ariaLabel="Checadas de la persona" columns={ATTENDANCE_COLUMNS} data={marks} keyOf={(row) => row.id} renderCard={(row) => <div><p className="font-medium">{formatDateTime(row.recorded_at)}</p><p className="mt-1 text-xs text-zinc-500">PIN {row.device_user_pin} · Estado {row.status}</p></div>} empty={<EmptyState icon={<Clock3 className="h-5 w-5" />} title="Sin checadas en este periodo" description="Aparecerán al vincular el PIN del reloj con esta persona." />} /></div>
-        {nextCursor ? <div className="mt-5 flex justify-center"><Button variant="secondary" onClick={() => void loadMore()}>Cargar las siguientes 100</Button></div> : null}
-        <Modal open={compensationEmployment !== null} onClose={() => setCompensationEmployment(null)} title="Nómina e IMSS" description="Acceso restringido; CLABE se cifra antes de guardarse." footer={<><Button variant="ghost" icon={<X className="h-4 w-4" />} className="w-10 !px-0" aria-label="Cancelar" title="Cancelar" onClick={() => setCompensationEmployment(null)} /><Button variant="primary" icon={<Save className="h-4 w-4" />} className="w-10 !px-0" aria-label="Guardar nómina e IMSS" title="Guardar nómina e IMSS" onClick={() => void saveCompensation()} loading={saving} /></>}><div className="grid gap-3 sm:grid-cols-2"><Field label="Salario diario">{(fieldId) => <Input id={fieldId} type="number" min="0" step="0.01" value={compensation.daily_salary ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, daily_salary: event.target.value }))} />}</Field><Field label="SBC / SDI">{(fieldId) => <Input id={fieldId} type="number" min="0" step="0.01" value={compensation.integrated_daily_salary ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, integrated_daily_salary: event.target.value }))} />}</Field><Field label="Periodicidad">{(fieldId) => <Select id={fieldId} value={compensation.pay_frequency ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, pay_frequency: event.target.value }))}><option value="">Selecciona</option><option value="semanal">Semanal</option><option value="catorcenal">Catorcenal</option><option value="quincenal">Quincenal</option><option value="mensual">Mensual</option></Select>}</Field><Field label="Método de pago">{(fieldId) => <Select id={fieldId} value={compensation.payment_method ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, payment_method: event.target.value }))}><option value="">Selecciona</option><option value="transferencia">Transferencia</option><option value="efectivo">Efectivo</option><option value="cheque">Cheque</option></Select>}</Field><Field label="CLABE">{(fieldId) => <Input id={fieldId} inputMode="numeric" maxLength={18} value={compensation.bank_clabe ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, bank_clabe: event.target.value.replace(/\D/g, "") }))} />}</Field><Field label="UMF">{(fieldId) => <Input id={fieldId} value={compensation.imss_umf ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_umf: event.target.value }))} />}</Field><Field label="Tipo trabajador IMSS">{(fieldId) => <Input id={fieldId} value={compensation.imss_worker_type ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_worker_type: event.target.value }))} />}</Field><Field label="Tipo salario IMSS">{(fieldId) => <Input id={fieldId} value={compensation.imss_salary_type ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_salary_type: event.target.value }))} />}</Field><Field label="Tipo jornada IMSS">{(fieldId) => <Input id={fieldId} value={compensation.imss_workday_type ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_workday_type: event.target.value }))} />}</Field></div></Modal>
+        <EmploymentSections personId={id} employments={employments} companies={companies} schedules={schedules} assignments={assignments} onChanged={refreshEmployments} onCompensation={(employment) => void openCompensation(employment)} />
+        {can("device_users.read") ? <Card className="mt-5 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><div className="rounded-lg bg-accent-soft p-2 text-accent"><Fingerprint className="h-5 w-5" aria-hidden /></div><div><h2 className="font-semibold text-foreground">Identidades en reloj</h2><p className="text-sm text-muted">PIN y nombre configurado en cada dispositivo.</p></div></div><Link href="/device-users" className="text-xs font-medium text-accent hover:text-accent-hover">Administrar</Link></div>
+          <div className="mt-4 grid gap-2">{deviceLinks.length ? deviceLinks.map((link) => <div key={`${link.device_id}:${link.pin}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line-subtle bg-surface-raised/50 px-3 py-2.5"><div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{link.device_name || link.device_serial_number}</p><p className="mt-0.5 text-xs text-muted">PIN <span className="font-mono font-medium text-foreground">{link.pin}</span> · {link.device_serial_number}</p><p className="mt-0.5 truncate text-xs text-muted">Nombre en reloj: {link.device_name_on_terminal || "Sin nombre"}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-medium ${link.sync_state === "synced" ? "bg-emerald-500/10 text-emerald-300" : link.sync_state === "failed" ? "bg-rose-500/10 text-rose-300" : "bg-amber-500/10 text-amber-300"}`}>{link.sync_state === "synced" ? "Confirmado" : link.sync_state === "failed" ? "Fallido" : "Pendiente"}</span></div>) : <EmptyState icon={<Fingerprint className="h-5 w-5" />} title="Sin PIN vinculado" description="Importa o vincula el PIN desde Personal en reloj para asociar sus checadas con este expediente." />}</div>
+        </Card> : null}
+        <Card className="mt-5 p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex items-center gap-3"><div className="rounded-lg bg-accent-soft p-2 text-accent"><Clock3 className="h-5 w-5" aria-hidden /></div><div><h2 className="font-semibold text-foreground">Checadas capturadas</h2><p className="text-sm text-muted">Último mes por defecto; el año se consulta en bloques de 100.</p></div></div>
+            <div className="grid grid-cols-2 items-end gap-2 lg:flex lg:flex-wrap">
+              <div className="min-w-0"><Field label="Desde">{(fieldId) => <Input id={fieldId} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />}</Field></div>
+              <div className="min-w-0"><Field label="Hasta">{(fieldId) => <Input id={fieldId} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />}</Field></div>
+              <Button variant="secondary" className="col-span-2 lg:col-span-1" onClick={() => { setDateFrom(String(today.getFullYear()) + "-01-01"); setDateTo(isoDate(today)); }}>Año actual</Button>
+            </div>
+          </div>
+        </Card>
+        <div className="mt-4">{attendanceLoading ? <LoadingState rows={4} /> : <DataTable ariaLabel="Checadas de la persona" columns={ATTENDANCE_COLUMNS} data={marks} keyOf={(row) => row.id} renderCard={(row) => <div><p className="font-medium">{formatDateTime(row.recorded_at)}</p><p className="mt-1 text-xs text-muted">PIN {row.device_user_pin} · Estado {row.status}</p></div>} empty={<EmptyState icon={<Clock3 className="h-5 w-5" />} title="Sin checadas en este periodo" description="Aparecerán al vincular el PIN del reloj con esta persona." />} />}</div>
+        {nextCursor && !attendanceLoading ? <div className="mt-5 flex justify-center"><Button variant="secondary" onClick={() => void loadMore()}>Cargar las siguientes 100</Button></div> : null}
+        <Modal open={compensationEmployment !== null} onClose={() => setCompensationEmployment(null)} title="Nómina e IMSS" description={compensationEmployment ? `Empleo ${compensationEmployment.employee_number}. Acceso restringido; CLABE cifrada al guardar.` : undefined} footer={<><Button variant="ghost" icon={<X className="h-4 w-4" />} onClick={() => setCompensationEmployment(null)}>Cancelar</Button><Button variant="primary" icon={<Save className="h-4 w-4" />} onClick={() => void saveCompensation()} loading={saving}>Guardar nómina e IMSS</Button></>}><div className="grid gap-3 sm:grid-cols-2"><Field label="Salario diario">{(fieldId) => <Input id={fieldId} type="number" min="0" step="0.01" value={compensation.daily_salary ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, daily_salary: event.target.value }))} />}</Field><Field label="SBC / SDI">{(fieldId) => <Input id={fieldId} type="number" min="0" step="0.01" value={compensation.integrated_daily_salary ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, integrated_daily_salary: event.target.value }))} />}</Field><Field label="Periodicidad">{(fieldId) => <Select id={fieldId} value={compensation.pay_frequency ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, pay_frequency: event.target.value }))}><option value="">Selecciona</option><option value="semanal">Semanal</option><option value="catorcenal">Catorcenal</option><option value="quincenal">Quincenal</option><option value="mensual">Mensual</option></Select>}</Field><Field label="Método de pago">{(fieldId) => <Select id={fieldId} value={compensation.payment_method ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, payment_method: event.target.value }))}><option value="">Selecciona</option><option value="transferencia">Transferencia</option><option value="efectivo">Efectivo</option><option value="cheque">Cheque</option></Select>}</Field><Field label="CLABE">{(fieldId) => <Input id={fieldId} inputMode="numeric" maxLength={18} value={compensation.bank_clabe ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, bank_clabe: event.target.value.replace(/\D/g, "") }))} />}</Field><Field label="UMF">{(fieldId) => <Input id={fieldId} value={compensation.imss_umf ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_umf: event.target.value }))} />}</Field><Field label="Tipo trabajador IMSS">{(fieldId) => <Input id={fieldId} value={compensation.imss_worker_type ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_worker_type: event.target.value }))} />}</Field><Field label="Tipo salario IMSS">{(fieldId) => <Input id={fieldId} value={compensation.imss_salary_type ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_salary_type: event.target.value }))} />}</Field><Field label="Tipo jornada IMSS">{(fieldId) => <Input id={fieldId} value={compensation.imss_workday_type ?? ""} onChange={(event) => setCompensation((current) => ({ ...current, imss_workday_type: event.target.value }))} />}</Field></div></Modal>
       </>}
     </>
   );

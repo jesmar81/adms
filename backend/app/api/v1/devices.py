@@ -271,10 +271,12 @@ async def device_capabilities(
     }
     querydata_user_seen = any(item in payload_types for item in querydata_user_types)
     allow_unvalidated = get_settings().zkteco_allow_unvalidated_user_commands
-    user_commands_allowed = not security_push or allow_unvalidated
-    safe_commands = ["INFO", "CHECK", "LOG", "GET_OPTION"]
-    if user_commands_allowed:
-        safe_commands.extend(["QUERY_USERINFO", "UPDATE_USERINFO", "DELETE_USERINFO"])
+    user_writes_allowed = not security_push or allow_unvalidated
+    # Inventory is a read-only probe needed to validate the actual Security
+    # PUSH response. Never couple it to the opt-in that enables user writes.
+    safe_commands = ["INFO", "CHECK", "LOG", "GET_OPTION", "QUERY_USERINFO"]
+    if user_writes_allowed:
+        safe_commands.extend(["UPDATE_USERINFO", "DELETE_USERINFO"])
     return {
         "profile": "security_push_acc" if security_push else "legacy_adms",
         "firmware": device.firmware_version,
@@ -288,18 +290,22 @@ async def device_capabilities(
         "safe_commands": safe_commands,
         "blocked_operations": (
             []
-            if user_commands_allowed
-            else ["user_import", "user_create", "user_update", "user_delete"]
+            if user_writes_allowed
+            else ["user_create", "user_update", "user_delete"]
         ),
         "next_validation": (
             "Activa temporalmente ZKTECO_ALLOW_UNVALIDATED_USER_COMMANDS durante una "
             "captura supervisada y usa exclusivamente un PIN de laboratorio."
-            if security_push and not querydata_user_seen and not allow_unvalidated
-            else (
-                "Modo de validación activo: captura cada respuesta y usa sólo "
-                "un PIN de laboratorio."
-            )
             if security_push and not querydata_user_seen and allow_unvalidated
+            else (
+                "Lectura de usuarios observada. Altas, cambios y bajas siguen "
+                "bloqueados hasta validar sus comandos por separado."
+                if querydata_user_seen
+                else "Consulta de inventario habilitada (sólo lectura): solicita usuarios "
+                "desde la aplicación y captura la respuesta real del reloj. "
+                "Altas, cambios y bajas permanecen bloqueados."
+            )
+            if security_push
             else None
         ),
     }
