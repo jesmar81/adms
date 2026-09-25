@@ -71,8 +71,6 @@ export default function EnrollmentsPage() {
   const [deviceId, setDeviceId] = useState("");
   const [methods, setMethods] = useState<string[]>(["face"]);
   const [fingers, setFingers] = useState<string[]>([]);
-  const [consentObtained, setConsentObtained] = useState(false);
-  const [consentReference, setConsentReference] = useState("");
   const [verifyingRow, setVerifyingRow] = useState<EnrollmentRequest | null>(null);
   const [verificationReference, setVerificationReference] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
@@ -91,7 +89,6 @@ export default function EnrollmentsPage() {
     [devices],
   );
   const hasFingerprints = methods.includes("fingerprint");
-  const hasBiometrics = methods.some((method) => ["face", "fingerprint", "palm"].includes(method));
   const filteredCandidates = useMemo(() => {
     const search = workerSearch.trim().toLocaleLowerCase();
     if (!search) return candidates;
@@ -173,7 +170,7 @@ export default function EnrollmentsPage() {
   }
 
   async function create() {
-    if (!personId || !employmentId || !deviceId || methods.length === 0 || saving || (hasFingerprints && !fingers.length) || (hasBiometrics && (!consentObtained || consentReference.trim().length < 3))) return;
+    if (!personId || !employmentId || !deviceId || methods.length === 0 || saving || (hasFingerprints && !fingers.length)) return;
     setSaving(true);
     setActionError(null);
     try {
@@ -183,18 +180,14 @@ export default function EnrollmentsPage() {
         device_id: deviceId,
         methods,
         fingerprint_positions: fingers,
-        consent_obtained: consentObtained,
-        consent_reference: consentReference.trim() || null,
       });
       setEmploymentId("");
       setPersonId("");
       setWorkerSearch("");
       setMethods(["face"]);
       setFingers([]);
-      setConsentObtained(false);
-      setConsentReference("");
       notify("Solicitud creada", {
-        message: "Las posiciones de huella seleccionadas quedaron registradas para el enrolamiento presencial.",
+        message: "La solicitud de enrolamiento quedó registrada.",
         tone: "success",
       });
       await loadRequests();
@@ -278,8 +271,7 @@ export default function EnrollmentsPage() {
           </div> : <p className="mt-3 text-xs text-muted">Elige un reloj para mostrar a los trabajadores que pueden enrolarse ahí.</p>}
           <div className="mt-6"><p className="text-sm font-medium text-foreground">Credenciales a enrolar</p><div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{METHODS.map((method) => { const active = methods.includes(method); const Icon = method === "fingerprint" ? Fingerprint : Hand; return <button type="button" key={method} onClick={() => toggleMethod(method)} aria-pressed={active} className={`rounded-xl border p-4 text-left transition-colors ${active ? "border-accent/50 bg-accent-soft shadow-glow" : "border-line-subtle bg-surface-raised hover:bg-surface-hover"}`}><Icon className={`h-5 w-5 ${active ? "text-accent" : "text-muted"}`} /><p className="mt-3 font-medium capitalize text-foreground">{method === "face" ? "Rostro" : method === "fingerprint" ? "Huellas" : method === "palm" ? "Palma" : "Tarjeta"}</p><p className="mt-1 text-xs text-muted">{active ? "Incluido en la solicitud" : "No seleccionado"}</p></button>; })}</div></div>
           {hasFingerprints ? <FingerprintSelector selected={fingers} onToggle={toggleFinger} /> : null}
-          {hasBiometrics ? <div className="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4"><label className="flex min-h-11 items-start gap-3 text-sm"><input type="checkbox" className="mt-1 shrink-0" checked={consentObtained} onChange={(event) => setConsentObtained(event.target.checked)} /><span><span className="block font-medium text-amber-200">Consentimiento biométrico documentado</span><span className="mt-0.5 block text-xs text-amber-300">Confirma que RR. HH. conserva el documento o folio aplicable.</span></span></label><div className="mt-3"><Field label="Folio o referencia del consentimiento">{(id) => <Input id={id} value={consentReference} onChange={(event) => setConsentReference(event.target.value)} placeholder="Ej. CONS-2026-0042" />}</Field></div></div> : null}
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line-subtle pt-5"><p className="text-xs text-muted">La solicitud conserva posiciones y evidencia de consentimiento; las plantillas se quedan exclusivamente en el dispositivo.</p><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void create()} loading={saving} disabled={!personId || !employmentId || !deviceId || !methods.length || candidatesLoading || (hasFingerprints && !fingers.length) || (hasBiometrics && (!consentObtained || consentReference.trim().length < 3))}>Crear solicitud</Button></div>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line-subtle pt-5"><p className="text-xs text-muted">Las plantillas biométricas permanecen exclusivamente en el dispositivo.</p><Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => void create()} loading={saving} disabled={!personId || !employmentId || !deviceId || !methods.length || candidatesLoading || (hasFingerprints && !fingers.length)}>Crear solicitud</Button></div>
         </div>
       </Card> : null}
       {requestsError ? <div className="mb-4"><ErrorState error={requestsError} onRetry={() => void loadRequests()} /></div> : null}
@@ -294,7 +286,7 @@ export default function EnrollmentsPage() {
           {label ? <div className="mt-3 border-t border-line-subtle pt-2"><Can permission="enrollments.approve"><Button size="sm" variant="secondary" icon={row.status === "verification_pending" ? <CheckCircle2 className="h-4 w-4" /> : <CircleArrowRight className="h-4 w-4" />} onClick={() => row.status === "requested" ? setVerifyingRow(row) : void advance(row)} loading={updatingId === row.id}>{label}</Button></Can></div> : null}
         </div>;
       }} empty={<EmptyState icon={<Fingerprint className="h-5 w-5" />} title="Sin solicitudes" description="Crea una solicitud y realiza el enrolamiento presencial en el equipo autorizado." />} />}
-      <Modal open={verifyingRow !== null} onClose={() => setVerifyingRow(null)} title="Verificar identidad presencial" description="Registra el documento o control interno utilizado; no captures imágenes del documento aquí." footer={<><Button variant="ghost" onClick={() => setVerifyingRow(null)}>Cancelar</Button><Button variant="primary" icon={<ShieldCheck className="h-4 w-4" />} onClick={() => verifyingRow ? void advance(verifyingRow, verificationReference.trim()) : undefined} loading={Boolean(verifyingRow && updatingId === verifyingRow.id)} disabled={verificationReference.trim().length < 3}>Confirmar identidad</Button></>}><Field label="Referencia de verificación">{(id) => <Input id={id} value={verificationReference} onChange={(event) => setVerificationReference(event.target.value)} placeholder="Ej. INE cotejada / control 1842" />}</Field><p className="mt-3 text-xs text-muted">La persona que creó la solicitud no puede verificarla ni aprobarla.</p></Modal>
+      <Modal open={verifyingRow !== null} onClose={() => setVerifyingRow(null)} title="Verificar identidad presencial" description="Registra el documento o control interno utilizado; no captures imágenes del documento aquí." footer={<><Button variant="ghost" onClick={() => setVerifyingRow(null)}>Cancelar</Button><Button variant="primary" icon={<ShieldCheck className="h-4 w-4" />} onClick={() => verifyingRow ? void advance(verifyingRow, verificationReference.trim()) : undefined} loading={Boolean(verifyingRow && updatingId === verifyingRow.id)} disabled={verificationReference.trim().length < 3}>Confirmar identidad</Button></>}><Field label="Referencia de verificación">{(id) => <Input id={id} value={verificationReference} onChange={(event) => setVerificationReference(event.target.value)} placeholder="Ej. INE cotejada / control 1842" />}</Field></Modal>
     </>
   );
 }

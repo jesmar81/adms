@@ -73,11 +73,9 @@ tocar ninguna base que no sea la E2E.
 2. Buscar por nombre y número de empleado, seleccionar a la persona correcta y
    confirmar visualmente su nombre, empresa y sitio cuando estén disponibles.
 3. Seleccionar el método de enrolamiento. Si incluye huella, elegir al menos
-   una posición. Si incluye datos biométricos, registrar consentimiento y una
-   referencia válida.
+   una posición.
 4. Crear la solicitud y comprobar que se conserva la persona, el contexto de
-   empleo, el reloj, los métodos, las posiciones y la evidencia de
-   consentimiento aplicables.
+   empleo, el reloj, los métodos y las posiciones.
 5. Recargar la página y comprobar que el historial presenta el nombre y los
    datos laborales legibles de la persona, no un UUID como identidad visible.
 
@@ -96,8 +94,8 @@ tocar ninguna base que no sea la E2E.
 ### P2 — Validaciones, errores y concurrencia de UI
 
 - No se puede enviar sin reloj, persona, método o datos requeridos.
-- La API rechaza posiciones de huella duplicadas o no soportadas, posiciones
-  sin método de huella y consentimiento biométrico incompleto.
+- La API rechaza posiciones de huella duplicadas o no soportadas y posiciones
+  sin método de huella.
 - Fallos al cargar relojes, historial o candidatos muestran errores claros y
   permiten reintentar.
 - Una respuesta tardía de una búsqueda anterior no reemplaza los candidatos de
@@ -107,14 +105,14 @@ tocar ninguna base que no sea la E2E.
 
 ### P2 — Aprobación e historial
 
-Con dos cuentas separadas, recorrer la secuencia soportada por la aplicación:
+Con la cuenta de RR. HH., recorrer la secuencia soportada por la aplicación:
 
 `requested → identity_verified → approved → awaiting_device_enrollment → verification_pending → completed`
 
-También comprobar rechazo y revocación cuando estén permitidos. La persona
-que creó una solicitud no puede verificar la identidad ni aprobar esa misma
-solicitud. Las transiciones inválidas deben ser rechazadas por la API y dejar
-el estado anterior intacto en el historial.
+También comprobar rechazo y revocación cuando estén permitidos. La misma
+cuenta de RR. HH. puede crear, verificar y aprobar una solicitud. Las
+transiciones inválidas deben ser rechazadas por la API y dejar el estado
+anterior intacto en el historial.
 
 La comunicación con un reloj físico queda fuera de la suite E2E de navegador.
 En el entorno E2E se validará el registro de la solicitud y sus estados; una

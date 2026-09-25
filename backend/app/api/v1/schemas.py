@@ -442,9 +442,9 @@ class EnrollmentRequestIn(BaseModel):
     device_id: uuid.UUID
     methods: list[str] = Field(min_length=1, max_length=4)
     fingerprint_positions: list[str] = Field(default_factory=list, max_length=10)
-    consent_obtained: bool = False
-    consent_reference: str | None = Field(default=None, min_length=3, max_length=255)
     note: str | None = Field(default=None, max_length=2000)
+
+    model_config = {"extra": "forbid"}
 
 
 class EnrollmentRequestStatusIn(BaseModel):
@@ -474,9 +474,6 @@ class EnrollmentRequestOut(BaseModel):
     identity_verified_by: uuid.UUID | None = None
     identity_verified_at: datetime | None = None
     identity_verification_reference: str | None = None
-    consent_recorded_by: uuid.UUID | None = None
-    consent_recorded_at: datetime | None = None
-    consent_reference: str | None = None
     note: str | None = None
 
     model_config = {"from_attributes": True}

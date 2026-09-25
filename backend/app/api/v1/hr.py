@@ -1412,9 +1412,6 @@ def _enrollment_out(
         identity_verified_by=row.identity_verified_by,
         identity_verified_at=row.identity_verified_at,
         identity_verification_reference=row.identity_verification_reference,
-        consent_recorded_by=row.consent_recorded_by,
-        consent_recorded_at=row.consent_recorded_at,
-        consent_reference=row.consent_reference,
         note=row.note,
     )
 
@@ -1587,22 +1584,11 @@ async def create_enrollment_request(
         raise HTTPException(
             status_code=422, detail="Fingerprint positions require fingerprint method"
         )
-    biometric_methods = {"face", "fingerprint", "palm"}
-    if methods & biometric_methods and (
-        not payload.consent_obtained or not payload.consent_reference
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail="Biometric enrollment requires recorded consent and its reference",
-        )
     row = EnrollmentRequest(
         employment_id=employment.id,
         device_id=device.id,
         methods={"requested": sorted(methods), "fingerprint_positions": sorted(fingers)},
         requested_by=user.id,
-        consent_recorded_by=user.id if payload.consent_obtained else None,
-        consent_recorded_at=datetime.now(UTC) if payload.consent_obtained else None,
-        consent_reference=payload.consent_reference,
         note=payload.note,
     )
     session.add(row)
@@ -1638,11 +1624,6 @@ async def update_enrollment_request(
         raise HTTPException(
             status_code=409,
             detail=f"Invalid enrollment transition: {row.status} -> {payload.status}",
-        )
-    if payload.status in {"identity_verified", "approved"} and row.requested_by == user.id:
-        raise HTTPException(
-            status_code=409,
-            detail="The requester cannot verify identity or approve the same enrollment",
         )
     if payload.status == "identity_verified":
         if not payload.verification_reference:

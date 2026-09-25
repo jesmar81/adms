@@ -110,6 +110,75 @@ async def test_create_confirm_lifecycle(life_client) -> None:  # type: ignore[no
     assert any(e["type"] == "user_sync_confirmed" for e in events)
 
 
+async def test_biometric_enrollment_does_not_require_or_expose_consent(
+    life_client,
+) -> None:  # type: ignore[no-untyped-def]
+    group = (
+        await life_client.post(
+            "/api/v1/corporate-groups", json={"name": "Enrolamiento", "code": "ENR-NC"}
+        )
+    ).json()
+    company = (
+        await life_client.post(
+            "/api/v1/companies",
+            json={"corporate_group_id": group["id"], "legal_name": "Empresa sin consentimiento"},
+        )
+    ).json()
+    person = (
+        await life_client.post(
+            "/api/v1/people",
+            json={"corporate_group_id": group["id"], "first_name": "Ada", "last_name": "Prueba"},
+        )
+    ).json()
+    employment = (
+        await life_client.post(
+            f"/api/v1/people/{person['id']}/employments",
+            json={
+                "company_id": company["id"],
+                "employee_number": "ENR-NC-01",
+                "started_on": "2020-01-01",
+            },
+        )
+    ).json()
+    device_id = await _device_id(life_client, "ENR-NC-001")
+    payload = {
+        "person_id": person["id"],
+        "employment_id": employment["id"],
+        "device_id": device_id,
+        "methods": ["face"],
+    }
+
+    created = await life_client.post("/api/v1/enrollment-requests", json=payload)
+
+    assert created.status_code == 201, created.text
+    assert created.json()["status"] == "requested"
+    assert created.json()["methods"] == ["face"]
+    assert not any(key.startswith("consent_") for key in created.json())
+    listed = await life_client.get("/api/v1/enrollment-requests")
+    assert listed.status_code == 200
+    assert not any(key.startswith("consent_") for key in listed.json()[0])
+
+    verified = await life_client.patch(
+        f"/api/v1/enrollment-requests/{created.json()['id']}",
+        json={"status": "identity_verified", "verification_reference": "INE cotejada"},
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["status"] == "identity_verified"
+    assert verified.json()["identity_verified_by"] == verified.json()["requested_by"]
+
+    approved = await life_client.patch(
+        f"/api/v1/enrollment-requests/{created.json()['id']}",
+        json={"status": "approved"},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["approved_by"] == approved.json()["requested_by"]
+
+    legacy_payload = {**payload, "consent_obtained": True, "consent_reference": "LEGACY-REF"}
+    rejected = await life_client.post("/api/v1/enrollment-requests", json=legacy_payload)
+    assert rejected.status_code == 422
+
+
 async def test_schedule_aware_reports(life_client) -> None:  # type: ignore[no-untyped-def]
     group = (
         await life_client.post("/api/v1/corporate-groups", json={"name": "R", "code": "RPT"})

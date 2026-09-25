@@ -402,9 +402,6 @@ export interface EnrollmentRequest {
   identity_verified_by: string | null;
   identity_verified_at: string | null;
   identity_verification_reference: string | null;
-  consent_recorded_by: string | null;
-  consent_recorded_at: string | null;
-  consent_reference: string | null;
   note: string | null;
 }
 

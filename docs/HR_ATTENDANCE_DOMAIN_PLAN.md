@@ -87,7 +87,7 @@ evidencia original.
 ### Enrolamiento biométrico
 
 - `enrollment_requests`: empleo/persona, reloj, métodos solicitados, operador,
-  aprobador, consentimiento/aviso aplicable, estado y evidencia de prueba.
+  aprobador, estado y evidencia de prueba.
 - Estados: `requested`, `approved`, `identity_verified`,
   `awaiting_device_enrollment`, `verification_pending`, `completed`,
   `rejected`, `revoked`.

@@ -489,13 +489,6 @@ class EnrollmentRequest(Base, UUIDPKMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     identity_verification_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    consent_recorded_by: Mapped[uuid.UUID | None] = mapped_column(
-        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    consent_recorded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    consent_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
