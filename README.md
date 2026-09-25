@@ -3,7 +3,7 @@
 ![CI](https://github.com/jesmar81/adms/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue?logo=python&logoColor=white)
 ![Node](https://img.shields.io/badge/node-24-green?logo=node.js&logoColor=white)
-![Next.js](https://img.shields.io/badge/next.js-14-black?logo=next.js&logoColor=white)
+![Next.js](https://img.shields.io/badge/next.js-15-black?logo=next.js&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/fastapi-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/postgresql-16-4169E1?logo=postgresql&logoColor=white)
 ![Redis](https://img.shields.io/badge/redis-7-DC382D?logo=redis&logoColor=white)
@@ -16,6 +16,8 @@ ZKTeco (prioridad: **SpeedFace-V5LP**): gateway ADMS con **FastAPI** + **Postgre
 > Referencia funcional (solo protocolo, no es un port):
 > `https://github.com/athwari/laravel-zkteco-adms-server`
 
+- Documentación: [índice de `docs/`](docs/README.md), [guía de uso](docs/GUIA_USUARIO.md)
+  y [operación/despliegue](docs/OPERACION_Y_DESPLIEGUE.md).
 - Protocolo ADMS: [`docs/ADMS_PROTOCOL.md`](docs/ADMS_PROTOCOL.md)
 - Captura activa de comandos de usuario: [`docs/SPEEDFACE_V5L_USER_COMMAND_CAPTURE.md`](docs/SPEEDFACE_V5L_USER_COMMAND_CAPTURE.md)
 - Dominio de personal y asistencia multiempresa: [`docs/HR_ATTENDANCE_DOMAIN_PLAN.md`](docs/HR_ATTENDANCE_DOMAIN_PLAN.md)
@@ -149,7 +151,7 @@ py -c "from cryptography.hazmat.primitives.asymmetric import rsa; from cryptogra
 ```text
 ZKTECO_ADMIN_USERNAME=admin
 ZKTECO_ADMIN_EMAIL=admin@example.com
-ZKTECO_ADMIN_PASSWORD=cambia-esto-ya-01   # mínimo 10 caracteres
+ZKTECO_ADMIN_PASSWORD=cambia-esto-ya-01   # mínimo 15 caracteres
 ```
 
 **4. Levantar todo:**
@@ -350,16 +352,15 @@ El frontend usa `NEXT_PUBLIC_API_URL` (defecto: `http://localhost:8000`).
 
 ## Uso
 
-1. Abre `http://localhost:3000/login` e inicia sesión con el superusuario creado.
-2. **Panel**: relojes en línea/fuera de línea, actividad reciente y comandos pendientes.
-3. **Relojes**: apunta el SpeedFace-V5LP (servidor Push/ADMS) a `http://<tu-host>:8000`.
-   El reloj se auto-registra vía `/iclock/registry`; el botón *Agregar reloj* explica
-   el proceso (no existe alta manual: el backend no la contempla por diseño).
-4. **Marcaciones / Personal / Comandos / Usuarios / Auditoría**: operan sobre datos
-   reales de la API, con permisos por rol (`Can` en UI, enforcement en backend).
+Consulta la [guía de uso](docs/GUIA_USUARIO.md) para configurar empresas,
+personal, horarios, relojes, enrolamientos y reportes. Para instalar o mantener
+la instancia, sigue [Instalación y operación](docs/OPERACION_Y_DESPLIEGUE.md).
 
-> Estado de validación con hardware real: **NO VERIFICADO** (sin dispositivo
-> disponible). Ver `docs/DEVELOPMENT.md §5`.
+La autorización de un reloj se hace primero desde la interfaz; el registro ADMS
+no habilita seriales desconocidos por defecto. La simulación de flujos en UI/API
+no sustituye la validación con el modelo y firmware físicos. Revisa
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) y las referencias de SpeedFace para
+el estado de validación de hardware.
 
 ---
 
