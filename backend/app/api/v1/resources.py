@@ -304,12 +304,20 @@ async def create_device_user(
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Device user with this PIN already exists")
-    from app.adms.commands import CommandBuilder, require_validated_user_command_profile
+    from app.adms.commands import (
+        CommandBuilder,
+        is_security_push_device,
+        require_validated_user_command_profile,
+    )
 
     require_validated_user_command_profile(device, CommandType.UPDATE_USERINFO)
 
     ctype, wire = CommandBuilder.update_userinfo(
-        pin=payload.pin, name=payload.name, privilege=payload.privilege, card=payload.card
+        pin=payload.pin,
+        name=payload.name,
+        privilege=payload.privilege,
+        card=payload.card,
+        security_push=is_security_push_device(device),
     )
     row = DeviceUser(
         device_id=device.id,
@@ -379,12 +387,20 @@ async def update_device_user(
         row.enabled = payload.enabled
         changes["enabled"] = payload.enabled
     if name != row.name or privilege != row.privilege or card != (row.card_number or ""):
-        from app.adms.commands import CommandBuilder, require_validated_user_command_profile
+        from app.adms.commands import (
+            CommandBuilder,
+            is_security_push_device,
+            require_validated_user_command_profile,
+        )
 
         require_validated_user_command_profile(device, CommandType.UPDATE_USERINFO)
 
         ctype, wire = CommandBuilder.update_userinfo(
-            pin=row.pin, name=name, privilege=privilege, card=card
+            pin=row.pin,
+            name=name,
+            privilege=privilege,
+            card=card,
+            security_push=is_security_push_device(device),
         )
         row.name = name
         row.privilege = privilege
@@ -430,11 +446,17 @@ async def delete_device_user(
     if row.sync_state == "pending":
         raise HTTPException(status_code=409, detail="A sync operation is already pending")
     device = await access_svc.require_device(session, user, row.device_id)
-    from app.adms.commands import CommandBuilder, require_validated_user_command_profile
+    from app.adms.commands import (
+        CommandBuilder,
+        is_security_push_device,
+        require_validated_user_command_profile,
+    )
 
     require_validated_user_command_profile(device, CommandType.DELETE_USERINFO)
 
-    ctype, wire = CommandBuilder.delete_userinfo(pin=row.pin)
+    ctype, wire = CommandBuilder.delete_userinfo(
+        pin=row.pin, security_push=is_security_push_device(device)
+    )
     row.sync_state = "pending"
     row.pending_op = {"op": "delete"}
     await session.flush()

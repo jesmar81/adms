@@ -160,7 +160,8 @@ enrolamiento (rostro, huella, palma o tarjeta según opciones disponibles):
 2. Elige el método y, para huella, las posiciones requeridas.
 3. Completa la verificación de identidad con una referencia operativa, por
    ejemplo “INE cotejada”, y revisa los datos asociados.
-4. Aprueba la solicitud y avanza el estado según la pantalla.
+4. Aprueba la solicitud y pulsa **Enrolar en reloj** para registrar que está
+   pendiente la captura presencial.
 5. Completa la captura siguiendo las instrucciones del terminal y confirma el
    resultado registrado.
 
@@ -169,8 +170,8 @@ la identidad y aprobarla; no se exige una segunda cuenta para el mismo
 enrolamiento. La aplicación no necesita guardar una copia del consentimiento
 biométrico para este flujo. La captura biométrica ocurre en el equipo cuando
 ese modelo y operación lo permiten; no asumas que la plantilla biométrica se
-sincroniza o se almacena en esta aplicación. Si el terminal no confirma la
-acción, revisa compatibilidad y conexión.
+sincroniza o se almacena en esta aplicación. Este flujo cambia el seguimiento
+administrativo; no envía una orden para abrir la captura en el terminal.
 
 ### Marcaciones
 

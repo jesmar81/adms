@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adms.commands import CommandType
+from app.adms.commands import CommandType, is_security_push_device
 from app.adms.parser import CommandResult, parse_info_command_response
 from app.core.config import get_settings
 from app.core.constants import (
@@ -186,11 +186,20 @@ async def confirm_result(
     from app.services import device_user as device_user_svc
 
     settings = get_settings()
-    if result.is_success:
+    # AC PUSH DATA QUERY returns the number of queried rows (including 0),
+    # rather than always returning 0. Keep other commands' success rules.
+    query_count_success = (
+        is_security_push_device(device)
+        and row.command_type == CommandType.QUERY_USERINFO.value
+        and row.command.startswith("DATA QUERY tablename=user,")
+        and result.return_code >= 0
+    )
+    if result.is_success or query_count_success:
         row.return_code = result.return_code
         row.confirmed_at = now
         row.response = response
         row.status = COMMAND_STATUS_CONFIRMED
+        row.error_message = None
         device.last_command_result_at = now
         if row.command_type == CommandType.INFO.value:
             info = parse_info_command_response(response)
@@ -220,6 +229,8 @@ async def confirm_result(
     # Failure: retry while attempts remain (L-02), else terminal failure.
     row.return_code = result.return_code
     row.response = response
+    if is_security_push_device(device) and result.return_code == -629:
+        row.error_message = "Security PUSH -629: nombre de tabla incorrecto"
     if row.attempt_count >= settings.zkteco_command_max_attempts:
         row.status = COMMAND_STATUS_FAILED
         row.confirmed_at = now

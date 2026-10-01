@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -404,9 +405,12 @@ async def test_hr_calendar_profile_and_schedule_assignment(  # type: ignore[no-u
         await life_client.get(f"/api/v1/employments/{employment['id']}/schedule-assignments")
     ).json()
     assert len(assignment_history) == 2
-    assert next(item for item in assignment_history if item["id"] == assignment.json()["id"])[
-        "effective_to"
-    ] == "2026-01-31"
+    assert (
+        next(item for item in assignment_history if item["id"] == assignment.json()["id"])[
+            "effective_to"
+        ]
+        == "2026-01-31"
+    )
     assert sum(item["active"] and item["effective_to"] is None for item in assignment_history) == 1
     before_current = await life_client.put(
         f"/api/v1/employments/{employment['id']}/schedule-assignments/current",
@@ -544,13 +548,156 @@ async def test_security_push_capabilities_are_evidence_based(life_client) -> Non
         json={"command_type": "QUERY_USERINFO", "params": {}},
     )
     assert query.status_code == 201
-    assert query.json()["command"] == "DATA QUERY USERINFO"
+    assert query.json()["command"] == "DATA QUERY tablename=user,fielddesc=*,filter=*"
     update = await life_client.post(
         f"/api/v1/devices/{device_id}/commands",
         json={"command_type": "UPDATE_USERINFO", "params": {"pin": "1", "name": "Lab"}},
     )
     assert update.status_code == 409
     assert update.json()["error"]["code"] == "DEVICE_PROTOCOL_EVIDENCE_REQUIRED"
+
+
+@pytest.mark.parametrize("return_code", [0, 2, -629])
+async def test_acc_user_query_roundtrip(  # type: ignore[no-untyped-def]
+    life_client, db_session, settings, monkeypatch, return_code
+) -> None:
+    from sqlalchemy import select
+
+    from app.models.device import AdmsPayload, DeviceCommand
+
+    monkeypatch.setattr(settings, "zkteco_command_max_attempts", 1)
+    device_id = await _device_id(life_client, "ACCUSERS1")
+    await life_client.post(
+        "/iclock/registry?SN=ACCUSERS1",
+        content=("DeviceType=acc,FirmVer=ZAM230-NF50VA-Ver1.1.9,PushVersion=Ver 3.1.6S-20251028"),
+    )
+    query = await life_client.post(
+        f"/api/v1/devices/{device_id}/commands", json={"command_type": "QUERY_USERINFO"}
+    )
+    assert query.status_code == 201
+    assert await _drain(life_client, "ACCUSERS1") == (
+        "C:1:DATA QUERY tablename=user,fielddesc=*,filter=*\n"
+    )
+    if return_code >= 0:
+        # Two pages, with a retry of the first page: acknowledge received rows,
+        # keep one record per PIN, and redact lowercase device passwords.
+        for page, pin, name in [
+            (1, "101", "Ana López"),
+            (1, "101", "Ana López"),
+            (2, "102", "Luis Pérez"),
+        ]:
+            received = await life_client.post(
+                "/iclock/querydata?SN=ACCUSERS1&type=tabledata&tablename=user"
+                f"&cmdid=1&count=1&packcnt=2&packidx={page}",
+                content=f"user pin={pin}\tname={name}\tcardno=99\tpassword=1234\tprivilege=0",
+            )
+            assert received.status_code == 200 and received.text == "user=1"
+        users = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()
+        assert len(users) == 2
+        assert {u["name"] for u in users} == {"Ana López", "Luis Pérez"}
+        assert all(u["card_number"] == "99" for u in users)
+        payloads = list(
+            (
+                await db_session.execute(
+                    select(AdmsPayload).where(AdmsPayload.endpoint == "querydata")
+                )
+            ).scalars()
+        )
+        assert len(payloads) == 3
+        assert all(p.data_type == "QUERYDATA:user" for p in payloads)
+        assert all("1234" not in (p.raw_body or "") for p in payloads)
+        capabilities = (await life_client.get(f"/api/v1/devices/{device_id}/capabilities")).json()
+        assert capabilities["confirmed"]["user_querydata_received"] is True
+    await life_client.post(
+        "/iclock/devicecmd?SN=ACCUSERS1", content=f"ID=1&Return={return_code}&CMD=DATA QUERY"
+    )
+    commands = (await life_client.get(f"/api/v1/devices/{device_id}/commands")).json()
+    assert commands[0]["return_code"] == return_code
+    assert commands[0]["status"] == ("confirmed" if return_code >= 0 else "failed")
+    if return_code == -629:
+        command = (await db_session.execute(select(DeviceCommand))).scalar_one()
+        assert "nombre de tabla" in command.error_message
+
+
+async def test_acc_user_upload_after_local_enrollment(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "ACCLOCAL1")
+    await life_client.post("/iclock/registry?SN=ACCLOCAL1", content="DeviceType=acc")
+    for _ in range(2):
+        uploaded = await life_client.post(
+            "/iclock/cdata?SN=ACCLOCAL1&table=tabledata&tablename=user&count=1",
+            content="user uid=5\tcardno=123\tpin=101\tname=Ana López\tprivilege=0",
+        )
+        assert uploaded.status_code == 200 and uploaded.text == "user=1"
+    users = (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json()
+    assert len(users) == 1 and users[0]["pin"] == "101"
+    assert users[0]["name"] == "Ana López" and users[0]["card_number"] == "123"
+
+
+@pytest.mark.parametrize("endpoint", ["cdata", "querydata"])
+async def test_acc_tabledata_rejects_biometrics(  # type: ignore[no-untyped-def]
+    life_client, db_session, endpoint
+) -> None:
+    from sqlalchemy import select
+
+    from app.models.device import AdmsPayload
+
+    device_id = await _device_id(life_client, "ACCTEMPLATE1")
+    kind = "table" if endpoint == "cdata" else "type"
+    response = await life_client.post(
+        f"/iclock/{endpoint}?SN=ACCTEMPLATE1&{kind}=tabledata&tablename=templatev10",
+        content="templatev10 pin=101\ttemplate=secret-biometric-template",
+    )
+    assert response.status_code == 200 and response.text == "OK"
+    payload = (
+        await db_session.execute(select(AdmsPayload).where(AdmsPayload.endpoint == endpoint))
+    ).scalar_one()
+    assert payload.processing_status == "quarantined"
+    assert "secret-biometric-template" not in (payload.raw_body or "")
+    assert (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json() == []
+
+
+async def test_acc_empty_query_and_count_do_not_create_users(life_client) -> None:  # type: ignore[no-untyped-def]
+    device_id = await _device_id(life_client, "ACCEMPTY1")
+    empty = await life_client.post(
+        "/iclock/querydata?SN=ACCEMPTY1&type=tabledata&tablename=user&count=0", content=""
+    )
+    assert empty.status_code == 200 and empty.text == "user=0"
+    count = await life_client.post(
+        "/iclock/querydata?SN=ACCEMPTY1&type=count&tablename=user", content="user=2"
+    )
+    assert count.status_code == 200 and count.text == "OK"
+    assert (await life_client.get(f"/api/v1/device-users?device_id={device_id}")).json() == []
+
+
+async def test_acc_lab_user_write_dialect(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(settings, "zkteco_allow_unvalidated_user_commands", True)
+    device_id = await _device_id(life_client, "ACCLABUSERS1")
+    await life_client.post("/iclock/registry?SN=ACCLABUSERS1", content="DeviceType=acc")
+    created = await life_client.post(
+        f"/api/v1/device-users/{device_id}",
+        json={"pin": "3100", "name": "Laboratorio", "privilege": 0, "card": "123"},
+    )
+    assert created.status_code == 201
+    assert await _drain(life_client, "ACCLABUSERS1") == (
+        "C:1:DATA UPDATE user CardNo=123\tPin=3100\tName=Laboratorio\tPrivilege=0\n"
+    )
+    await life_client.post(
+        "/iclock/devicecmd?SN=ACCLABUSERS1", content="ID=1&Return=0&CMD=DATA UPDATE"
+    )
+    user_id = created.json()["id"]
+    updated = await life_client.put(
+        f"/api/v1/device-users/{user_id}", json={"name": "Laboratorio actualizado"}
+    )
+    assert updated.status_code == 200
+    assert await _drain(life_client, "ACCLABUSERS1") == (
+        "C:2:DATA UPDATE user CardNo=123\tPin=3100\tName=Laboratorio actualizado\tPrivilege=0\n"
+    )
+    await life_client.post(
+        "/iclock/devicecmd?SN=ACCLABUSERS1", content="ID=2&Return=0&CMD=DATA UPDATE"
+    )
+    deleted = await life_client.delete(f"/api/v1/device-users/{user_id}")
+    assert deleted.status_code == 202
+    assert await _drain(life_client, "ACCLABUSERS1") == "C:3:DATA DELETE user Pin=3100\n"
 
 
 async def test_failed_confirm_marks_failed(life_client, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]

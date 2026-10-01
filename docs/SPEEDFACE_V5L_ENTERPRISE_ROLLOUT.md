@@ -11,11 +11,14 @@ Security PUSH** y estas operaciones:
   verificación;
 - entrega del comando de sólo lectura `INFO` mediante `getrequest`.
 
-No confirma todavía `querydata`, el formato de consulta de usuarios, ni el
+No confirma todavía `querydata`, la consulta de usuarios en este equipo, ni el
 significado de `Return=-5000`. Por ello el sistema recibe y audita
 `/iclock/querydata`, pero bloquea las escrituras de usuarios hechas con el
-wire legacy `DATA ... USERINFO` cuando el dispositivo se identifica como
-`DeviceType=acc`.
+wire de usuarios cuando el dispositivo se identifica como `DeviceType=acc`.
+El código ahora construye el dialecto AC (`user`, `Pin`, `CardNo`) y recibe
+`tabledata/user`; la documentación y pruebas de servidor se detallan en el
+[análisis del 1 de octubre](SPEEDFACE_V5L_USER_COMMAND_ANALYSIS.md).
+Todavía falta validar la respuesta con el firmware actual del equipo.
 
 Esta barrera es intencional: una cola marcada como exitosa sin evidencia de
 que el equipo aplicó el cambio no es una integración apta para producción.

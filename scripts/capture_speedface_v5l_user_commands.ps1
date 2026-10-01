@@ -151,9 +151,9 @@ $streamText = if (Test-Path -LiteralPath $streamsDirectory) {
     lab_pin = $LabPin
     authorization_reference = $AuthorizationReference
     command_poll_observed = "$text`n$streamText" -match 'getrequest|devicecmd'
-    user_query_observed = "$text`n$streamText" -match 'QUERY USERINFO|querydata|USERINFO'
-    update_observed = $streamText -match 'UPDATE USERINFO'
-    delete_observed = $streamText -match 'DELETE USERINFO'
+    user_query_observed = "$text`n$streamText" -match 'QUERY USERINFO|DATA QUERY tablename=user|querydata|USERINFO'
+    update_observed = $streamText -match 'DATA UPDATE (USERINFO|user)\s'
+    delete_observed = $streamText -match 'DATA DELETE (USERINFO|user)\s'
     decoded_directory = $decoded
     next_step = 'Entrega el PCAP, metadata, timeline, response-summary y carpeta decoded por canal privado.'
 } | ConvertTo-Json | Set-Content -LiteralPath $summary -Encoding utf8

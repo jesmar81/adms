@@ -52,7 +52,7 @@ def _utcnow() -> datetime:
 # Device-side `Password=` credentials must never be stored retrievably (§19):
 # raw bodies keep full troubleshooting value with secrets redacted. The
 # SHA-256 is computed over the ORIGINAL bytes for integrity correlation.
-_PASSWORD_RE = re.compile(r"(Password=)[^\t\r\n&]*")
+_PASSWORD_RE = re.compile(r"(Password=)[^\t\r\n&]*", re.IGNORECASE)
 _SENSITIVE_QUERY_KEY_RE = re.compile(
     r"(?:pass(?:word)?|token|secret|auth(?:orization)?|cookie|session)", re.IGNORECASE
 )
@@ -282,6 +282,8 @@ async def handle_cdata(
             response_text = wire_ok()
         elif table == "USERINFO":
             response_text = await _handle_userinfo(session, device, request, text)
+        elif table == "TABLEDATA":
+            response_text = await _handle_tabledata(session, device, request, body)
         elif table == "OPTIONS":
             response_text = await _handle_options(session, device, request, body, text)
         else:
@@ -391,6 +393,38 @@ async def _handle_userinfo(
     return wire_ok()
 
 
+async def _handle_tabledata(
+    session: AsyncSession, device: Device, request: Request, body: bytes
+) -> str:
+    """Receive AC PUSH user uploads, including users enrolled at the terminal."""
+    table_name = request.query_params.get("tablename", "unknown").lower()
+    biometric = _querydata_is_biometric(request)
+    known_user_table = table_name == "user" and not biometric
+    payload = await _store_payload(
+        session,
+        device=device,
+        endpoint="cdata",
+        request=request,
+        body=body,
+        data_type=f"TABLEDATA:{table_name[:40]}",
+        redact_body=not known_user_table,
+    )
+    if not known_user_table:
+        payload.processing_status = "quarantined"
+        payload.error_message = "Unsupported Security PUSH tabledata body redacted by policy"
+        payload.processed_at = _utcnow()
+        return wire_ok()
+    users, stats = adms_parser.parse_userinfo(
+        body.decode("utf-8", errors="replace"), device.serial_number
+    )
+    received = await device_user_svc.sync_from_device(session, device=device, users=users)
+    payload.processing_status = "processed" if not stats.skipped else "partial"
+    if stats.skipped:
+        payload.error_message = f"skipped {stats.skipped}/{stats.total} malformed user rows"
+    payload.processed_at = _utcnow()
+    return f"user={received}"
+
+
 async def _handle_options(
     session: AsyncSession, device: Device, request: Request, body: bytes, text: str
 ) -> str:
@@ -442,7 +476,7 @@ def _querydata_is_biometric(request: Request) -> bool:
     values = " ".join(
         request.query_params.get(key, "") for key in ("type", "table", "tablename", "data_type")
     ).lower()
-    return "bio" in values or "photo" in values or "face" in values
+    return any(marker in values for marker in ("bio", "photo", "face", "template", "finger"))
 
 
 @router.api_route("/querydata", methods=["GET", "POST"])
@@ -469,11 +503,15 @@ async def handle_querydata(
         await session.rollback()
         return device
 
+    query_kind = (
+        request.query_params.get("type") or request.query_params.get("table") or ""
+    ).lower()
+    # AC PUSH uses type=tabledata with tablename=user. type=count with the
+    # same tablename is a count response and must never be imported as users.
     query_type = (
-        request.query_params.get("type")
-        or request.query_params.get("table")
-        or request.query_params.get("tablename")
-        or "unknown"
+        request.query_params.get("tablename", "unknown")
+        if query_kind == "tabledata"
+        else query_kind or request.query_params.get("tablename") or "unknown"
     ).lower()
     biometric = _querydata_is_biometric(request)
     known_user_table = query_type in {"user", "users", "userinfo"}
@@ -533,7 +571,12 @@ async def handle_querydata(
         await session.rollback()
         log.error("querydata_error", serial=sn, error=str(exc))
         return PlainTextResponse("ERROR", status_code=500)
-    return PlainTextResponse(wire_ok(), status_code=200)
+    response_text = (
+        f"user={imported}"
+        if query_kind == "tabledata" and known_user_table and not biometric
+        else wire_ok()
+    )
+    return PlainTextResponse(response_text, status_code=200)
 
 
 # ---------------------------------------------------------------------------

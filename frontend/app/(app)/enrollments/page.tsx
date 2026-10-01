@@ -212,7 +212,7 @@ export default function EnrollmentsPage() {
     setActionError(null);
     try {
       await api.updateEnrollmentRequest(row.id, { status: next, verification_reference: reference || null });
-      notify("Estado actualizado", { message: "La solicitud avanzó de forma controlada.", tone: "success" });
+      notify("Estado actualizado", { message: next === "awaiting_device_enrollment" ? "Realiza la captura en el reloj y después verifica la credencial." : "La solicitud avanzó de forma controlada.", tone: "success" });
       await loadRequests();
       if (next === "identity_verified") {
         setVerifyingRow(null);
@@ -236,7 +236,7 @@ export default function EnrollmentsPage() {
     key: "actions",
     header: "",
     render: (row) => {
-      const labels: Record<string, string> = { requested: "Verificar identidad", identity_verified: "Aprobar", approved: "Enviar a enrolar", awaiting_device_enrollment: "Verificar credencial", verification_pending: "Completar" };
+      const labels: Record<string, string> = { requested: "Verificar identidad", identity_verified: "Aprobar", approved: "Enrolar en reloj", awaiting_device_enrollment: "Verificar credencial", verification_pending: "Completar" };
       const label = labels[row.status];
       if (!label) return null;
       return <Can permission="enrollments.approve"><Button size="sm" icon={row.status === "verification_pending" ? <CheckCircle2 className="h-4 w-4" /> : <CircleArrowRight className="h-4 w-4" />} onClick={() => row.status === "requested" ? setVerifyingRow(row) : void advance(row)} loading={updatingId === row.id}>{label}</Button></Can>;
@@ -245,7 +245,7 @@ export default function EnrollmentsPage() {
 
   return (
     <>
-      <PageHeader title="Enrolamientos" description="Solicitudes profesionales de credenciales; las plantillas biométricas nunca salen del reloj." crumbs={[{ label: "Enrolamientos" }]} />
+      <PageHeader title="Enrolamientos" description="Solicitudes de enrolamiento presencial: realiza la captura en el reloj y registra aquí su seguimiento." crumbs={[{ label: "Enrolamientos" }]} />
       {actionError ? <div className="mb-4"><ErrorState error={actionError} /></div> : null}
       {can("enrollments.write") ? <Card className="mb-5 overflow-hidden">
         <div className="border-b border-line-subtle bg-surface-raised/80 px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-soft text-accent"><ShieldCheck className="h-5 w-5" /></span><div><h2 className="font-semibold">Nueva solicitud de enrolamiento</h2><p className="text-sm text-muted">Selecciona al trabajador por su nombre. Se validará su empleo vigente con la empresa del reloj.</p></div></div></div>
@@ -276,7 +276,7 @@ export default function EnrollmentsPage() {
       </Card> : null}
       {requestsError ? <div className="mb-4"><ErrorState error={requestsError} onRetry={() => void loadRequests()} /></div> : null}
       {requestsLoading ? <LoadingState rows={5} /> : requestsError ? null : <DataTable ariaLabel="Solicitudes de enrolamiento" columns={requestColumns} data={requests} keyOf={(row) => row.id} renderCard={(row) => {
-        const labels: Record<string, string> = { requested: "Verificar identidad", identity_verified: "Aprobar", approved: "Enviar a enrolar", awaiting_device_enrollment: "Verificar credencial", verification_pending: "Completar" };
+        const labels: Record<string, string> = { requested: "Verificar identidad", identity_verified: "Aprobar", approved: "Enrolar en reloj", awaiting_device_enrollment: "Verificar credencial", verification_pending: "Completar" };
         const label = labels[row.status];
         const device = deviceById.get(row.device_id);
         return <div>

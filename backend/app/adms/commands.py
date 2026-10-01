@@ -25,9 +25,7 @@ class CommandType(StrEnum):
     GET_OPTION = "GET_OPTION"
 
 
-_USER_WRITE_COMMANDS = frozenset(
-    {CommandType.UPDATE_USERINFO, CommandType.DELETE_USERINFO}
-)
+_USER_WRITE_COMMANDS = frozenset({CommandType.UPDATE_USERINFO, CommandType.DELETE_USERINFO})
 
 
 def is_security_push_device(device: Device) -> bool:
@@ -77,29 +75,36 @@ class CommandBuilder:
         return CommandType.LOG, "LOG"
 
     @staticmethod
-    def query_userinfo() -> tuple[CommandType, str]:
+    def query_userinfo(*, security_push: bool = False) -> tuple[CommandType, str]:
+        if security_push:
+            return CommandType.QUERY_USERINFO, "DATA QUERY tablename=user,fielddesc=*,filter=*"
         return CommandType.QUERY_USERINFO, "DATA QUERY USERINFO"
 
     @staticmethod
     def update_userinfo(
-        pin: str, name: str, privilege: int = 0, card: str = ""
+        pin: str, name: str, privilege: int = 0, card: str = "", *, security_push: bool = False
     ) -> tuple[CommandType, str]:
-        """Real devices require `DATA UPDATE USERINFO` (NOT `USER ADD`, §38)."""
+        """Use the user table and field names for the device's PUSH dialect."""
         for fname, val in (("pin", pin), ("name", name), ("card", card)):
             _reject_crlf(fname, val)
         if not pin:
             raise InvalidCommandError("pin is required")
         if not 0 <= privilege <= 14:
             raise InvalidCommandError("privilege must be 0-14")
-        cmd = f"DATA UPDATE USERINFO PIN={pin}\tName={name}\tPrivilege={privilege}\tCard={card}"
+        if security_push:
+            cmd = f"DATA UPDATE user CardNo={card}\tPin={pin}\tName={name}\tPrivilege={privilege}"
+        else:
+            cmd = f"DATA UPDATE USERINFO PIN={pin}\tName={name}\tPrivilege={privilege}\tCard={card}"
         return CommandType.UPDATE_USERINFO, cmd
 
     @staticmethod
-    def delete_userinfo(pin: str) -> tuple[CommandType, str]:
+    def delete_userinfo(pin: str, *, security_push: bool = False) -> tuple[CommandType, str]:
         """Full word DELETE required — `DATA DEL` fails on devices (§39)."""
         _reject_crlf("pin", pin)
         if not pin:
             raise InvalidCommandError("pin is required")
+        if security_push:
+            return CommandType.DELETE_USERINFO, f"DATA DELETE user Pin={pin}"
         return CommandType.DELETE_USERINFO, f"DATA DELETE USERINFO PIN={pin}"
 
     @staticmethod
@@ -111,10 +116,11 @@ class CommandBuilder:
 
 
 def build_command(
-    command_type: str, params: dict[str, str] | None = None
+    command_type: str, params: dict[str, str] | None = None, *, device: Device | None = None
 ) -> tuple[CommandType, str]:
     """Build a command from an API-level type + params dict."""
     params = params or {}
+    security_push = device is not None and is_security_push_device(device)
     ctype = CommandType(command_type)
     if ctype is CommandType.INFO:
         return CommandBuilder.info()
@@ -123,16 +129,19 @@ def build_command(
     if ctype is CommandType.LOG:
         return CommandBuilder.log()
     if ctype is CommandType.QUERY_USERINFO:
-        return CommandBuilder.query_userinfo()
+        return CommandBuilder.query_userinfo(security_push=security_push)
     if ctype is CommandType.UPDATE_USERINFO:
         return CommandBuilder.update_userinfo(
             pin=params.get("pin", ""),
             name=params.get("name", ""),
             privilege=int(params.get("privilege", "0") or 0),
             card=params.get("card", ""),
+            security_push=security_push,
         )
     if ctype is CommandType.DELETE_USERINFO:
-        return CommandBuilder.delete_userinfo(pin=params.get("pin", ""))
+        return CommandBuilder.delete_userinfo(
+            pin=params.get("pin", ""), security_push=security_push
+        )
     if ctype is CommandType.GET_OPTION:
         return CommandBuilder.get_option(key=params.get("key", ""))
     raise InvalidCommandError(f"Unsupported command type: {command_type}")

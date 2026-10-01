@@ -260,6 +260,9 @@ def parse_userinfo(data: str, serial_number: str = "") -> tuple[list[UserRecord]
         if not line.strip():
             continue
         stats.total += 1
+        # Security PUSH tabledata prefixes each row with its table name.
+        if line.lower().startswith("user "):
+            line = line[5:]
         fields: dict[str, str] = {}
         for part in line.split("\t"):
             eq = part.find("=")
@@ -278,7 +281,7 @@ def parse_userinfo(data: str, serial_number: str = "") -> tuple[list[UserRecord]
                 pin=pin,
                 name=fields.get("name", ""),
                 privilege=_parse_int_or_default(fields.get("privilege"), 0),
-                card=fields.get("card", ""),
+                card=fields.get("cardno", fields.get("card", "")),
                 password=fields.get("password", ""),
             )
         )

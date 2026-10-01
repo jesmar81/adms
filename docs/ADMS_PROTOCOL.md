@@ -78,6 +78,8 @@ Clasificación por query `table`:
   exacta `OK`.
 - `OPERLOG` → `OK` (se persiste payload + evento `operlog_received` a nivel `debug`).
 - `USERINFO` → §4.3. Respuesta `OK`.
+- `tabledata` con `tablename=user` → usuarios AC PUSH. Respuesta `user=N`.
+  Otras tablas `tabledata` se aíslan y su cuerpo no se conserva.
 - ausente/otro → device-info (§4.4) en POST + drenar comandos (igual que getrequest).
 - EXCEPCIÓN: `GET` con `options=all` es handshake; un `POST` nunca se clasifica
   como handshake, aunque lleve ese parámetro, para no descartar datos. Para
@@ -155,7 +157,9 @@ Body con dos formatos (ambos soportados):
   Parser: normaliza `\n`→`&`, acumula KV; cada nuevo `ID=` vuelca el resultado
   anterior. `ID` no entero → warning + skip. Campos: `ID`, `RETURN`/`Return`,
   `CMD`. Correlación por `device_commands.protocol_command_id`
-  (+ `device_id`). Actualiza `status` (`0 → confirmed`, otro → `failed`),
+  (+ `device_id`). Actualiza `status` (`0 → confirmed`; la consulta AC de
+  usuarios también acepta cantidades positivas; otros retornos → reintento
+  o `failed` según límite),
   `return_code`, `confirmed_at`, `response`. Evento `command_confirmed` /
   `command_failed`. IDs desconocidos → warning, `OK` igualmente. Respuesta `OK`.
 
@@ -167,6 +171,8 @@ borrar → `pending` y la fila desaparece solo al confirmar; `PUT` edita +
 recola. Eventos `user_sync_confirmed`/`user_sync_failed`. Ver §61.
 
 ## 7. Comandos soportados (§37–41) — whitelist estricta
+
+El dialecto se selecciona con el `DeviceType` registrado. Lista legacy T&A:
 
 ```text
 INFO                                  → INFO
@@ -182,6 +188,21 @@ DATA UPDATE USERINFO PIN=<pin>\tName=<n>\tPrivilege=<p>\tCard=<c>
                                       → alta/edición (NO "USER ADD", §38)
 DATA DELETE USERINFO PIN=<pin>        → baja (NO "DATA DEL", §39)
 ```
+
+Para `DeviceType=acc`, el wire de usuarios es:
+
+```text
+DATA QUERY tablename=user,fielddesc=*,filter=*
+DATA UPDATE user CardNo=<c>\tPin=<pin>\tName=<n>\tPrivilege=<p>
+DATA DELETE user Pin=<pin>
+```
+
+La consulta vuelve por `querydata?type=tabledata&tablename=user`; el acuse
+es `user=N` por paquete. Las subidas espontáneas usan
+`cdata?table=tabledata&tablename=user`. Las escrituras AC requieren la
+bandera de laboratorio hasta validarlas en el reloj. Véase el
+[análisis de usuarios y firmware](SPEEDFACE_V5L_USER_COMMAND_ANALYSIS.md)
+para las fuentes, el código `-629` y los límites de esta compatibilidad.
 
 Construcción solo vía `CommandBuilder` + `CommandType` enum con validación
 CRLF (`\r`/`\n` → `InvalidCommandError`, §81). `SHELL` deshabilitado sin

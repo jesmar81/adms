@@ -6,6 +6,13 @@ bajas siguen bloqueadas para el perfil A&C / Security PUSH hasta validar por
 separado esos comandos. Esta captura sirve para comprobar si el firmware
 responde a la consulta y en qué formato; no garantiza que la admita.
 
+Para `DeviceType=acc`, el comando esperado es
+`DATA QUERY tablename=user,fielddesc=*,filter=*`. La respuesta documentada
+usa `querydata?type=tabledata&tablename=user`, con acuse `user=N`.
+Guarda los valores actuales de **Versión de firmware** y **Versión PUSH**:
+los valores históricos no prueban qué build está instalado hoy. Véase el
+[análisis y sus fuentes](SPEEDFACE_V5L_USER_COMMAND_ANALYSIS.md).
+
 El enrolamiento de rostro, huella o palma sigue siendo presencial en el
 equipo: esta aplicación registra y controla su flujo, pero no transmite ni
 guarda plantillas biométricas.

@@ -289,9 +289,7 @@ async def device_capabilities(
         },
         "safe_commands": safe_commands,
         "blocked_operations": (
-            []
-            if user_writes_allowed
-            else ["user_create", "user_update", "user_delete"]
+            [] if user_writes_allowed else ["user_create", "user_update", "user_delete"]
         ),
         "next_validation": (
             "Activa temporalmente ZKTECO_ALLOW_UNVALIDATED_USER_COMMANDS durante una "
@@ -321,7 +319,7 @@ async def queue_command(
 ) -> CommandOut:
     device = await access_svc.require_device(session, user, device_id)
     try:
-        ctype, wire = build_command(payload.command_type, payload.params)
+        ctype, wire = build_command(payload.command_type, payload.params, device=device)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     require_validated_user_command_profile(device, ctype)

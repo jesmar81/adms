@@ -29,6 +29,17 @@ def test_userinfo_without_pin_skipped() -> None:
     assert users == [] and stats.skipped == 1
 
 
+def test_security_push_user_rows_preserve_names_and_card_numbers() -> None:
+    users, stats = parse_userinfo(
+        "user Pin=101\tName=Ana López\tCardNo=123456789\tPrivilege=14\tPassword=1234\r\n"
+        "user uid=2\tcardno=99\tpin=102\tname=Luis Pérez\tprivilege=0"
+    )
+    assert stats.valid == 2 and stats.skipped == 0
+    assert users[0].pin == "101" and users[0].name == "Ana López"
+    assert users[0].card == "123456789" and users[0].privilege == 14
+    assert users[1].pin == "102" and users[1].card == "99"
+
+
 def test_registry_tilde_prefix() -> None:
     info = parse_registry_body("~DeviceName=SpeedFace,~FWVersion=Ver 1.1.17,~MACAddress=AA:BB")
     assert info == {"DeviceName": "SpeedFace", "FWVersion": "Ver 1.1.17", "MACAddress": "AA:BB"}
